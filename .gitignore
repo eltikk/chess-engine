@@ -1,0 +1,18 @@
+# Executables and build output
+*.out
+*.exe
+*.o
+*.obj
+bin/
+build/
+out/
+
+# IDE / Editor configurations
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS metadata
+.DS_Store
+Thumbs.db
