@@ -1,9 +1,6 @@
 #include <iostream> 
 #include "Board.h"
 
-
-
-
 Board::Board(){
     setStartingPosition();
 }
@@ -232,8 +229,8 @@ void Board::loadFEN(const std::string& fen){
         }
     }
 
-    //En passant target square
 
+    //En passant target square
     enPassantSquare = -1;
     
     if(fen[thirdSpace+1] != '-'){
@@ -252,7 +249,7 @@ void Board::loadFEN(const std::string& fen){
     halfmoveClock = std::stoi(halfMoveString);
 
 
-    //FullMove
+    //Fullmove counter
     std::string fullMoveString = fen.substr(fifthSpace + 1);
     fullmoveCounter = std::stoi(fullMoveString);
 
