@@ -79,7 +79,7 @@ void MoveGenerator::generateKingMoves(const Board& board, MoveList& moveList){
     std::uint64_t king = board.getPieceBitboard(kingPiece);
 
     if(king == 0)return;
-    
+
     std::uint64_t friendly = board.getFriendlyPieces();
     std::uint64_t enemy = board.getEnemyPieces();
 
@@ -99,3 +99,110 @@ void MoveGenerator::generateKingMoves(const Board& board, MoveList& moveList){
         });
     }
 }
+
+template <bool isWhite>
+void MoveGenerator::generatePawnMoves(const Board& board, MoveList& moveList) {
+    
+    // Compile-time Constants
+    constexpr Piece pawnPiece   = isWhite ? Piece::WHITE_PAWN   : Piece::BLACK_PAWN;
+    constexpr Piece queenPiece  = isWhite ? Piece::WHITE_QUEEN  : Piece::BLACK_QUEEN;
+    constexpr Piece rookPiece   = isWhite ? Piece::WHITE_ROOK   : Piece::BLACK_ROOK;
+    constexpr Piece bishopPiece = isWhite ? Piece::WHITE_BISHOP : Piece::BLACK_BISHOP;
+    constexpr Piece knightPiece = isWhite ? Piece::WHITE_KNIGHT : Piece::BLACK_KNIGHT;
+
+    constexpr uint64_t promotionRank    = isWhite ? 0xFF00000000000000ULL : 0x00000000000000FFULL;
+    constexpr uint64_t intermediateRank = isWhite ? 0x0000000000FF0000ULL : 0x0000FF0000000000ULL; // Rank 3 (White) / Rank 6 (Black)
+
+    constexpr int pushOffset            = isWhite ? 8 : -8;
+    constexpr int captureLeftOffset     = isWhite ? 7 : -9;
+    constexpr int captureRightOffset    = isWhite ? 9 : -7;
+
+    
+    // Board State Extraction
+    uint64_t pawns           = board.getPieceBitboard(pawnPiece);
+    uint64_t occupied        = board.getOccupied();
+    uint64_t enemy           = board.getEnemyPieces();
+    int enPassantSquare      = board.getEnPassantSquare();
+
+    
+    // 1. PUSHES (Single & Double)
+    uint64_t singlePushes = (isWhite ? (pawns << 8) : (pawns >> 8)) & ~occupied;
+
+    // Non-promotion single pushes 
+    uint64_t quietPushes = singlePushes & ~promotionRank;
+    while (quietPushes) {
+        int to = BitUtils::popLSB(quietPushes);
+        moveList.add({static_cast<uint8_t>(to - pushOffset), static_cast<uint8_t>(to), MoveType::Quiet});
+    }
+
+    // Double pushes
+    uint64_t doublePushes = (isWhite ? ((singlePushes & intermediateRank) << 8) 
+                                     : ((singlePushes & intermediateRank) >> 8)) & ~occupied;
+    while (doublePushes) {
+        int to = BitUtils::popLSB(doublePushes);
+        moveList.add({static_cast<uint8_t>(to - 2 * pushOffset), static_cast<uint8_t>(to), MoveType::DoublePawnPush});
+    }
+
+    
+    // 2. CAPTURES (Left & Right)    
+    uint64_t leftCaptures  = (isWhite ? ((pawns & NOT_A) << 7) : ((pawns & NOT_A) >> 9)) & enemy;
+    uint64_t rightCaptures = (isWhite ? ((pawns & NOT_H) << 9) : ((pawns & NOT_H) >> 7)) & enemy;
+
+    uint64_t quietLeftCaptures  = leftCaptures & ~promotionRank;
+    uint64_t quietRightCaptures = rightCaptures & ~promotionRank;
+    uint64_t promoLeftCaps      = leftCaptures & promotionRank;
+    uint64_t promoRightCaps     = rightCaptures & promotionRank;
+
+    while (quietLeftCaptures) {
+        int to = BitUtils::popLSB(quietLeftCaptures);
+        moveList.add({static_cast<uint8_t>(to - captureLeftOffset), static_cast<uint8_t>(to), MoveType::Capture});
+    }
+
+    while (quietRightCaptures) {
+        int to = BitUtils::popLSB(quietRightCaptures);
+        moveList.add({static_cast<uint8_t>(to - captureRightOffset), static_cast<uint8_t>(to), MoveType::Capture});
+    }
+
+
+    
+    // 3. PROMOTIONS (Push & Capture)    
+    uint64_t promotionPushes = singlePushes & promotionRank;
+
+    auto addPromotions = [&](int from, int to, MoveType type) {
+        moveList.add({static_cast<uint8_t>(from), static_cast<uint8_t>(to), type, queenPiece});
+        moveList.add({static_cast<uint8_t>(from), static_cast<uint8_t>(to), type, rookPiece});
+        moveList.add({static_cast<uint8_t>(from), static_cast<uint8_t>(to), type, bishopPiece});
+        moveList.add({static_cast<uint8_t>(from), static_cast<uint8_t>(to), type, knightPiece});
+    };
+
+    while (promotionPushes) {
+        int to = BitUtils::popLSB(promotionPushes);
+        addPromotions(to - pushOffset, to, MoveType::Promotion);
+    }
+
+    while (promoLeftCaps) {
+        int to = BitUtils::popLSB(promoLeftCaps);
+        addPromotions(to - captureLeftOffset, to, MoveType::PromotionCapture);
+    }
+
+    while (promoRightCaps) {
+        int to = BitUtils::popLSB(promoRightCaps);
+        addPromotions(to - captureRightOffset, to, MoveType::PromotionCapture);
+    }
+
+
+    
+    // 4. en Passant    
+    if (enPassantSquare != -1) {
+        uint64_t enPassantAttackers = getPawnAttacks(enPassantSquare, !isWhite) & pawns;
+        while (enPassantAttackers) {
+            int from = BitUtils::popLSB(enPassantAttackers);
+            moveList.add({static_cast<uint8_t>(from), static_cast<uint8_t>(enPassantSquare), MoveType::EnPassant});
+        }
+    }
+}
+
+
+
+template void MoveGenerator::generatePawnMoves<true>(const Board& board, MoveList& moveList);
+template void MoveGenerator::generatePawnMoves<false>(const Board& board, MoveList& moveList);
