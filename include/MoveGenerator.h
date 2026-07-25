@@ -13,7 +13,8 @@ public:
     static std::uint64_t getPawnAttacks(int square, bool isWhite){return pawnAttacks[isWhite? 0 : 1][square];}
 
     static void generateKnightMoves(const Board& board, MoveList& moveList);
-
+    static void generateKingMoves(const Board& board, MoveList& moveList);
+    
 private:
     static void initializeKnightAttacks();
     static void initializeKingAttacks();

@@ -46,6 +46,7 @@ void MoveGenerator::initializePawnAttacks(){
      }
 }
 
+
 void MoveGenerator::generateKnightMoves(const Board& board, MoveList& moveList) {
     Piece knightPiece = board.isWhiteToMove() ? Piece::WHITE_KNIGHT : Piece::BLACK_KNIGHT;
 
@@ -70,5 +71,31 @@ void MoveGenerator::generateKnightMoves(const Board& board, MoveList& moveList) 
                 type
             });
         }
+    }
+}
+
+void MoveGenerator::generateKingMoves(const Board& board, MoveList& moveList){
+    Piece kingPiece = board.isWhiteToMove() ? Piece::WHITE_KING : Piece::BLACK_KING;
+    std::uint64_t king = board.getPieceBitboard(kingPiece);
+
+    if(king == 0)return;
+    
+    std::uint64_t friendly = board.getFriendlyPieces();
+    std::uint64_t enemy = board.getEnemyPieces();
+
+    int fromSquare = BitUtils::lsb(king);
+
+    std::uint64_t targets = getKingAttacks(fromSquare) & ~friendly;
+
+    while(targets){
+        int toSquare = BitUtils::popLSB(targets);
+
+        MoveType type = BitUtils::getBit(enemy, toSquare) ? MoveType::Capture : MoveType::Quiet;
+
+        moveList.add({
+            static_cast<std::uint8_t>(fromSquare),
+            static_cast<std::uint8_t>(toSquare),
+            type
+        });
     }
 }
