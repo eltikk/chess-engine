@@ -1,5 +1,5 @@
 #include "MoveGenerator.h"
-
+#include "BitUtils.h"
 
 constexpr std::uint64_t NOT_A  = 0xFEFEFEFEFEFEFEFEULL; // Excludes File A
 constexpr std::uint64_t NOT_H  = 0x7F7F7F7F7F7F7F7FULL; // Excludes File H
@@ -44,4 +44,31 @@ void MoveGenerator::initializePawnAttacks(){
         //Black Pawn Attacks
         pawnAttacks[1][i] = ((b >> 7) & NOT_A) | ((b>>9) & NOT_H);
      }
+}
+
+void MoveGenerator::generateKnightMoves(const Board& board, MoveList& moveList) {
+    Piece knightPiece = board.isWhiteToMove() ? Piece::WHITE_KNIGHT : Piece::BLACK_KNIGHT;
+
+    std::uint64_t knights = board.getPieceBitboard(knightPiece);
+    std::uint64_t friendly = board.getFriendlyPieces();
+    std::uint64_t enemy = board.getEnemyPieces();
+
+    while (knights) {
+        int fromSquare = BitUtils::popLSB(knights);
+        
+        // Attack table masked with non-friendly squares
+        std::uint64_t targets = getKnightAttacks(fromSquare) & ~friendly;
+
+        while (targets) {
+            int toSquare = BitUtils::popLSB(targets);
+
+            MoveType type = BitUtils::getBit(enemy, toSquare) ? MoveType::Capture : MoveType::Quiet;
+
+            moveList.add({
+                static_cast<std::uint8_t>(fromSquare),
+                static_cast<std::uint8_t>(toSquare),
+                type
+            });
+        }
+    }
 }

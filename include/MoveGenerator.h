@@ -1,6 +1,8 @@
 #pragma once 
 
 #include <cstdint>
+#include "Board.h"
+#include "MoveList.h"
 
 class MoveGenerator{
 public:
@@ -8,8 +10,9 @@ public:
 
     static std::uint64_t getKnightAttacks(int square){return knightAttacks[square];}
     static std::uint64_t getKingAttacks(int square){return kingAttacks[square];}
-    static std::uint64_t getPawnAttacks(int square, bool isWhite){
-        return pawnAttacks[isWhite? 0 : 1][square];}
+    static std::uint64_t getPawnAttacks(int square, bool isWhite){return pawnAttacks[isWhite? 0 : 1][square];}
+
+    static void generateKnightMoves(const Board& board, MoveList& moveList);
 
 private:
     static void initializeKnightAttacks();

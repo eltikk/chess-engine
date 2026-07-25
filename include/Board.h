@@ -34,7 +34,8 @@ public:
     std::uint64_t getWhitePieces() const { return whitePieces; }
     std::uint64_t getBlackPieces() const { return blackPieces; }
     std::uint64_t getOccupied() const { return occupied; }
-
+    std::uint64_t getFriendlyPieces() const { return whiteToMove ? whitePieces : blackPieces;}
+    std::uint64_t getEnemyPieces() const { return whiteToMove ? blackPieces : whitePieces;}
     bool isWhiteToMove() const { return whiteToMove; }
     int getHalfmoveClock() const { return halfmoveClock; }
     int getFullmoveCounter() const { return fullmoveCounter; }

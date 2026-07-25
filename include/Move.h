@@ -3,7 +3,7 @@
 #include <cstdint>
 #include "Board.h"
 
-enum class MoveType : uint8_t{
+enum class MoveType : std::uint8_t{
     Quiet,
     Capture,
     DoublePawnPush,
