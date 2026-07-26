@@ -16,3 +16,12 @@ out/
 # OS metadata
 .DS_Store
 Thumbs.db
+
+# Extensionless files in the root folder
+*
+!*.*
+!*/
+
+
+
+
