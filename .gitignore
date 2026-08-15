@@ -1,27 +1,38 @@
-# Executables and build output
-*.out
-*.exe
-*.o
-*.obj
-bin/
+# Build directories
 build/
+bin/
 out/
 
-# IDE / Editor configurations
+# CMake generated files
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+compile_commands.json
+
+# Compiled binaries / objects
+*.o
+*.obj
+*.out
+*.exe
+*.a
+*.so
+*.dll
+*.dylib
+
+# Project executable
+/chess-engine
+
+# IDE / editor files
 .vscode/
 .idea/
 *.swp
 *.swo
 
-# OS metadata
+# Debug / temporary files
+*.log
+*.tmp
+
+# OS files
 .DS_Store
 Thumbs.db
-
-# Extensionless files in the root folder
-*
-!*.*
-!*/
-
-
-
-
