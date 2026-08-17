@@ -136,3 +136,34 @@ TEST_CASE("White king is not in check") {
         MoveGenerator::isKingInCheck(board, true)
     );
 }
+
+TEST_CASE("White kingside castling is generated when legal") {
+    Board board;
+    board.loadFEN("4k3/8/8/8/8/8/8/4K2R w K - 0 1");
+
+    MoveList moves;
+
+    MoveGenerator::init();
+    MoveGenerator::generateCastlingMoves(board, moves);
+
+    EXPECT_EQ(1, moves.count);
+
+    EXPECT_EQ(4, moves.moves[0].from); // e1
+    EXPECT_EQ(6, moves.moves[0].to);   // g1
+    EXPECT_EQ(MoveType::KingCastle, moves.moves[0].type);
+}
+
+TEST_CASE("White kingside castling is blocked by attacked transit square") {
+    Board board;
+    board.loadFEN("4kr2/8/8/8/8/8/8/4K2R w K - 0 1");
+
+    MoveList moves;
+
+    MoveGenerator::init();
+    MoveGenerator::generateCastlingMoves(board, moves);
+
+    EXPECT_EQ(0, moves.count);
+}
+
+
+

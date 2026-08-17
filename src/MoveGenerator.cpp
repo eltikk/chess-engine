@@ -348,3 +348,96 @@ bool MoveGenerator::isKingInCheck(const Board& board, bool whiteKing){
     int kingSquare = BitUtils::lsb(king);
     return isSquareAttacked(board, kingSquare, !whiteKing);
 }
+
+
+void MoveGenerator::generateCastlingMoves(const Board& board, MoveList& moveList) {
+    std::uint64_t occupied = board.getOccupied();
+    std::uint8_t rights = board.getCastlingRights();
+
+    if (board.isWhiteToMove()) {
+
+        // white kingside: e1 -> g1
+        if (rights & (1 << 3)) {
+            bool squaresEmpty =
+                !BitUtils::getBit(occupied, 5) &&   // f1
+                !BitUtils::getBit(occupied, 6);     // g1
+
+            bool squaresSafe =
+                !isSquareAttacked(board, 4, false) && // e1
+                !isSquareAttacked(board, 5, false) && // f1
+                !isSquareAttacked(board, 6, false);   // g1
+
+            bool piecesPresent =
+                BitUtils::getBit(board.getPieceBitboard(Piece::WHITE_KING), 4) &&
+                BitUtils::getBit(board.getPieceBitboard(Piece::WHITE_ROOK), 7);
+
+            if (squaresEmpty && squaresSafe && piecesPresent) {
+                moveList.add({4, 6, MoveType::KingCastle});
+            }
+        }
+
+        // white queenside: e1 -> c1
+        if (rights & (1 << 2)) {
+            bool squaresEmpty =
+                !BitUtils::getBit(occupied, 1) &&   // b1
+                !BitUtils::getBit(occupied, 2) &&   // c1
+                !BitUtils::getBit(occupied, 3);     // d1
+
+            bool squaresSafe =
+                !isSquareAttacked(board, 4, false) && // e1
+                !isSquareAttacked(board, 3, false) && // d1
+                !isSquareAttacked(board, 2, false);   // c1
+
+            bool piecesPresent =
+                BitUtils::getBit(board.getPieceBitboard(Piece::WHITE_KING), 4) &&
+                BitUtils::getBit(board.getPieceBitboard(Piece::WHITE_ROOK), 0);
+
+            if (squaresEmpty && squaresSafe && piecesPresent) {
+                moveList.add({4, 2, MoveType::QueenCastle});
+            }
+        }
+
+    } else {
+
+        // black kingside: e8 -> g8
+        if (rights & (1 << 1)) {
+            bool squaresEmpty =
+                !BitUtils::getBit(occupied, 61) &&  // f8
+                !BitUtils::getBit(occupied, 62);    // g8
+
+            bool squaresSafe =
+                !isSquareAttacked(board, 60, true) && // e8
+                !isSquareAttacked(board, 61, true) && // f8
+                !isSquareAttacked(board, 62, true);   // g8
+
+            bool piecesPresent =
+                BitUtils::getBit(board.getPieceBitboard(Piece::BLACK_KING), 60) &&
+                BitUtils::getBit(board.getPieceBitboard(Piece::BLACK_ROOK), 63);
+
+            if (squaresEmpty && squaresSafe && piecesPresent) {
+                moveList.add({60, 62, MoveType::KingCastle});
+            }
+        }
+
+        // black queenside: e8 -> c8
+        if (rights & (1 << 0)) {
+            bool squaresEmpty =
+                !BitUtils::getBit(occupied, 57) &&  // b8
+                !BitUtils::getBit(occupied, 58) &&  // c8
+                !BitUtils::getBit(occupied, 59);    // d8
+
+            bool squaresSafe =
+                !isSquareAttacked(board, 60, true) && // e8
+                !isSquareAttacked(board, 59, true) && // d8
+                !isSquareAttacked(board, 58, true);   // c8
+
+            bool piecesPresent =
+                BitUtils::getBit(board.getPieceBitboard(Piece::BLACK_KING), 60) &&
+                BitUtils::getBit(board.getPieceBitboard(Piece::BLACK_ROOK), 56);
+
+            if (squaresEmpty && squaresSafe && piecesPresent) {
+                moveList.add({60, 58, MoveType::QueenCastle});
+            }
+        }
+    }
+}

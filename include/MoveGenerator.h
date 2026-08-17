@@ -27,6 +27,8 @@ public:
 
     static bool isSquareAttacked(const Board& board, int square, bool byWhite);
     static bool isKingInCheck(const Board& board, bool whiteKing);
+
+    static void generateCastlingMoves(const Board& board, MoveList& moveList);
 private:
     static void initializeKnightAttacks();
     static void initializeKingAttacks();
