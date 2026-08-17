@@ -293,7 +293,48 @@ void MoveGenerator::generatePawnMoves(const Board& board, MoveList& moveList) {
     }
 }
 
-
-
 template void MoveGenerator::generatePawnMoves<true>(const Board& board, MoveList& moveList);
 template void MoveGenerator::generatePawnMoves<false>(const Board& board, MoveList& moveList);
+
+
+bool MoveGenerator::isSquareAttacked(const Board& board, int square, bool byWhite){
+    Piece pawnPiece = byWhite ? Piece::WHITE_PAWN : Piece::BLACK_PAWN;
+    Piece knightPiece = byWhite ? Piece::WHITE_KNIGHT : Piece::BLACK_KNIGHT;
+    Piece bishopPiece = byWhite ? Piece::WHITE_BISHOP : Piece::BLACK_BISHOP;
+    Piece rookPiece = byWhite ? Piece::WHITE_ROOK : Piece::BLACK_ROOK;
+    Piece queenPiece = byWhite ? Piece::WHITE_QUEEN : Piece::BLACK_QUEEN;
+    Piece kingPiece = byWhite ? Piece::WHITE_KING : Piece::BLACK_KING;
+
+    std::uint64_t pawns = board.getPieceBitboard(pawnPiece);
+    std::uint64_t knights = board.getPieceBitboard(knightPiece);
+    std::uint64_t bishops = board.getPieceBitboard(bishopPiece);
+    std::uint64_t rooks = board.getPieceBitboard(rookPiece);
+    std::uint64_t queens = board.getPieceBitboard(queenPiece);
+    std::uint64_t king = board.getPieceBitboard(kingPiece);
+
+    std::uint64_t occupied = board.getOccupied();
+
+    if (byWhite){
+        if (getPawnAttacks(square, false) & pawns)
+            return true;
+    } else {
+        if (getPawnAttacks(square, true) & pawns)
+            return true;
+    }
+
+    if(getKnightAttacks(square) & knights)
+        return true;
+    
+    if(getKingAttacks(square) & king)
+        return true;
+
+    if(MagicBitboards::getBishopAttacks(square, occupied) & (bishops | queens))
+        return true;
+    
+    if(MagicBitboards::getRookAttacks(square, occupied) & (rooks | queens))
+        return true;
+
+
+    return false;
+}
+

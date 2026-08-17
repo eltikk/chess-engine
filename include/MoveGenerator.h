@@ -24,6 +24,9 @@ public:
             generatePawnMoves<false>(board, moveList);
         }
     }
+
+    static bool isSquareAttacked(const Board& board, int square, bool byWhite);
+    
 private:
     static void initializeKnightAttacks();
     static void initializeKingAttacks();
