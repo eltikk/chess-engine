@@ -338,3 +338,13 @@ bool MoveGenerator::isSquareAttacked(const Board& board, int square, bool byWhit
     return false;
 }
 
+bool MoveGenerator::isKingInCheck(const Board& board, bool whiteKing){
+    Piece kingPiece = whiteKing ? Piece::WHITE_KING : Piece::BLACK_KING;
+    uint64_t king = board.getPieceBitboard(kingPiece);
+
+    if(king == 0)
+        return false;
+    
+    int kingSquare = BitUtils::lsb(king);
+    return isSquareAttacked(board, kingSquare, !whiteKing);
+}

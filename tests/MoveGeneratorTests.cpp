@@ -118,3 +118,21 @@ TEST_CASE("Square is not attacked") {
         MoveGenerator::isSquareAttacked(board, 27, true)
     );
 }
+
+TEST_CASE("White king is in check") {
+    Board board;
+    board.loadFEN("4r3/8/8/8/8/8/8/4K3 w - - 0 1");
+
+    EXPECT_TRUE(
+        MoveGenerator::isKingInCheck(board, true)
+    );
+}
+
+TEST_CASE("White king is not in check") {
+    Board board;
+    board.loadFEN("8/8/8/8/8/8/8/4K3 w - - 0 1");
+
+    EXPECT_FALSE(
+        MoveGenerator::isKingInCheck(board, true)
+    );
+}
