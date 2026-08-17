@@ -1,5 +1,6 @@
 #include "MoveGenerator.h"
 #include "BitUtils.h"
+#include "MagicBitboards.h"
 
 constexpr std::uint64_t NOT_A  = 0xFEFEFEFEFEFEFEFEULL; // Excludes File A
 constexpr std::uint64_t NOT_H  = 0x7F7F7F7F7F7F7F7FULL; // Excludes File H
@@ -10,6 +11,7 @@ void MoveGenerator::init(){
     initializeKnightAttacks();
     initializeKingAttacks();
     initializePawnAttacks();
+    MagicBitboards::init();
 }
 
 
@@ -61,6 +63,33 @@ void MoveGenerator::generateKnightMoves(const Board& board, MoveList& moveList) 
         std::uint64_t targets = getKnightAttacks(fromSquare) & ~friendly;
 
         while (targets) {
+            int toSquare = BitUtils::popLSB(targets);
+
+            MoveType type = BitUtils::getBit(enemy, toSquare) ? MoveType::Capture : MoveType::Quiet;
+
+            moveList.add({
+                static_cast<std::uint8_t>(fromSquare),
+                static_cast<std::uint8_t>(toSquare),
+                type
+            });
+        }
+    }
+}
+
+void MoveGenerator::generateBishopMoves(const Board& board, MoveList& moveList) {
+    Piece bishopPiece = board.isWhiteToMove() ? Piece::WHITE_BISHOP : Piece::BLACK_BISHOP;
+
+    std::uint64_t bishops = board.getPieceBitboard(bishopPiece);
+    std::uint64_t friendly = board.getFriendlyPieces();
+    std::uint64_t enemy = board.getEnemyPieces();
+    std::uint64_t occupied = board.getOccupied();
+
+    while(bishops){
+        int fromSquare = BitUtils::popLSB(bishops);
+
+        std::uint64_t targets = MagicBitboards::getBishopAttacks(fromSquare, occupied) & ~friendly;
+
+        while(targets){
             int toSquare = BitUtils::popLSB(targets);
 
             MoveType type = BitUtils::getBit(enemy, toSquare) ? MoveType::Capture : MoveType::Quiet;

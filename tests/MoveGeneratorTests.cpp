@@ -17,3 +17,17 @@ TEST_CASE("White pawn attack table handles file edges") {
     EXPECT_EQ(Test::bitboard({"g3"}),
               MoveGenerator::getPawnAttacks(Test::square("h2"), true));
 }
+
+TEST_CASE("Bishop move generation respects blockers") {
+    Board board;
+
+    // Use whatever FEN-loading function you already use in BoardTests
+    board.loadFEN("8/8/1p3p2/8/3B4/2P5/8/8 w - - 0 1");
+
+    MoveList moves;
+
+    MoveGenerator::init();
+    MoveGenerator::generateBishopMoves(board, moves);
+
+    EXPECT_EQ(7, moves.count);
+}
