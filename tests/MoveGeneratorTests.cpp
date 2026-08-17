@@ -43,3 +43,15 @@ TEST_CASE("Rook move generation respects blockers") {
 
     EXPECT_EQ(8, moves.count);
 }
+
+TEST_CASE("Queen move generation respects blockers") {
+    Board board;
+    board.loadFEN("8/8/3p1p2/8/3Q4/2P5/3P4/8 w - - 0 1");
+
+    MoveList moves;
+
+    MoveGenerator::init();
+    MoveGenerator::generateQueenMoves(board, moves);
+
+    EXPECT_TRUE(moves.count > 0);
+}

@@ -16,6 +16,7 @@ public:
     static void generateBishopMoves(const Board& board, MoveList& moveList);
     static void generateRookMoves(const Board& board, MoveList& moveList);
     static void generateKingMoves(const Board& board, MoveList& moveList);
+    static void generateQueenMoves(const Board& board, MoveList& moveList);
     static void generatePawnMoves(const Board& board, MoveList& moveList){
         if(board.isWhiteToMove()){
             generatePawnMoves<true>(board, moveList);

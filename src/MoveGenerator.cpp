@@ -119,7 +119,8 @@ void MoveGenerator::generateRookMoves(const Board& board, MoveList& moveList) {
             & ~friendly;
 
         while (targets) {
-            int toSquare = BitUtils::popLSB(targets);
+            int toSquare = 
+                BitUtils::popLSB(targets);
 
             MoveType type =
                 BitUtils::getBit(enemy, toSquare) ? MoveType::Capture : MoveType::Quiet;
@@ -132,6 +133,37 @@ void MoveGenerator::generateRookMoves(const Board& board, MoveList& moveList) {
         }
     }
 }
+
+void MoveGenerator::generateQueenMoves(const Board& board, MoveList& moveList){
+    Piece queenPiece = board.isWhiteToMove() ? Piece::WHITE_QUEEN : Piece::BLACK_QUEEN;
+
+    std::uint64_t queens = board.getPieceBitboard(queenPiece);
+    std::uint64_t friendly = board.getFriendlyPieces();
+    std::uint64_t enemy = board.getEnemyPieces();
+    std::uint64_t occupied = board.getOccupied();
+
+    while(queens){
+        int fromSquare = BitUtils::popLSB(queens);
+
+        std::uint64_t targets = 
+            (MagicBitboards::getRookAttacks(fromSquare, occupied) |
+             MagicBitboards::getBishopAttacks(fromSquare, occupied))
+            & ~friendly;
+        
+        while(targets){
+            int toSquare = BitUtils::popLSB(targets);
+
+            MoveType type = BitUtils::getBit(enemy, toSquare) ? MoveType::Capture : MoveType::Quiet;
+
+            moveList.add({
+                static_cast<std::uint8_t>(fromSquare),
+                static_cast<std::uint8_t>(toSquare),
+                type
+            });
+        }
+    }
+}
+
 
 void MoveGenerator::generateKingMoves(const Board& board, MoveList& moveList){
     Piece kingPiece = board.isWhiteToMove() ? Piece::WHITE_KING : Piece::BLACK_KING;
