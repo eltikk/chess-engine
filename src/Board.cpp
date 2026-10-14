@@ -1,4 +1,6 @@
-#include <iostream> 
+#include <iostream>
+#include <sstream>
+#include <stdexcept>
 #include "Board.h"
 
 Board::Board(){
@@ -117,15 +119,42 @@ void Board::clearBoard(){
 //FEN IMPLEMENTATION
 
 void Board::loadFEN(const std::string& fen){
+    std::istringstream iss(fen);
+    std::string placement, side, castling, enPassant;
+
+    //The first four fields are required
+    if(!(iss >> placement >> side >> castling >> enPassant)){
+        throw std::invalid_argument("FEN must contain at least four fields: " + fen);
+    }
+
+    //En passant target square: '-' or a square on rank 6 (white to move) / rank 3 (black to move)
+    int enPassantTarget = -1;
+
+    if(enPassant != "-"){
+        const char expectedRank = (side == "b") ? '3' : '6';
+
+        if(enPassant.size() != 2 || enPassant[0] < 'a' || enPassant[0] > 'h' || enPassant[1] != expectedRank){
+            throw std::invalid_argument("Invalid en passant square in FEN: " + fen);
+        }
+
+        enPassantTarget = (enPassant[1] - '1') * 8 + (enPassant[0] - 'a');
+    }
+
+    //Halfmove clock and fullmove counter are optional
+    int halfmove = 0;
+    int fullmove = 1;
+    int value = 0;
+
+    if(iss >> value) halfmove = value;
+    if(iss >> value) fullmove = value;
+
     clearBoard();
 
     //Piece placement
     int rank = 7;
     int file = 0;
 
-    for(char c : fen){
-        if(c == ' ')break;
-        
+    for(char c : placement){
         if(c == '/'){
             rank--;
             file = 0;
@@ -193,22 +222,12 @@ void Board::loadFEN(const std::string& fen){
 
 
     //Side to move
-    std::size_t firstSpace = fen.find(' ');
-
-    if(firstSpace != std::string::npos && firstSpace + 1 < fen.size()){
-        whiteToMove = (fen[firstSpace+1] == 'w');
-    }
+    whiteToMove = (side == "w");
 
 
     //Castling ability test
     castlingRights = 0;
-    std::string castling;
-    std::size_t secondSpace = fen.find(' ', firstSpace + 1);
-    std::size_t thirdSpace = fen.find(' ', secondSpace + 1);
-    if(secondSpace != std::string::npos){
-        castling = fen.substr(secondSpace + 1, thirdSpace - secondSpace - 1);
-    }
-    
+
     for(char c : castling){
         switch(c){
             case 'K':
@@ -230,27 +249,7 @@ void Board::loadFEN(const std::string& fen){
     }
 
 
-    //En passant target square
-    enPassantSquare = -1;
-    
-    if(fen[thirdSpace+1] != '-'){
-        int enPassantFile = fen[thirdSpace+1] - 'a';
-        int enPassantRank = fen[thirdSpace+2] - '1';
-        enPassantSquare = enPassantRank* 8 + enPassantFile;
-    }
-
-
-
-    //Halfmove clock
-    std::size_t fourthSpace = fen.find(' ', thirdSpace+1);
-    std::size_t fifthSpace = fen.find(' ', fourthSpace+1);
-    
-    std::string halfMoveString = fen.substr(fourthSpace+1, fifthSpace - fourthSpace -1);
-    halfmoveClock = std::stoi(halfMoveString);
-
-
-    //Fullmove counter
-    std::string fullMoveString = fen.substr(fifthSpace + 1);
-    fullmoveCounter = std::stoi(fullMoveString);
-
+    enPassantSquare = enPassantTarget;
+    halfmoveClock = halfmove;
+    fullmoveCounter = fullmove;
 }
