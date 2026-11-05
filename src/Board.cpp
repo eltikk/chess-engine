@@ -2,6 +2,8 @@
 #include <sstream>
 #include <stdexcept>
 #include "Board.h"
+#include "BitUtils.h"
+#include "Move.h"
 
 Board::Board(){
     setStartingPosition();
@@ -38,7 +40,7 @@ void Board::setStartingPosition(){
     whiteToMove = true;
     updateOccupancy();
 
-    castlingRights = 0b1111; 
+    castlingRights = 0b1111;
     enPassantSquare = -1;
     halfmoveClock = 0;
     fullmoveCounter = 1;
@@ -61,6 +63,14 @@ void Board::updateOccupancy(){
     occupied = whitePieces | blackPieces;
 }
 
+Piece Board::pieceAtSquare(int square) const {
+    for (int p = 0; p < PIECE_COUNT; p++) {
+        if (BitUtils::getBit(pieces[p], square)) {
+            return static_cast<Piece>(p);
+        }
+    }
+    return PIECE_COUNT;
+}
 
 char Board::pieceAt(int square) const {
     const std::uint64_t mask = 1ULL << square;
@@ -112,9 +122,189 @@ void Board::clearBoard(){
     blackPieces = 0;
     occupied = 0;
 
-} 
+}
+
+void Board::makeMove(const Move& move, UndoState& undo){
+
+    Piece movingPiece = pieceAtSquare(move.from);
 
 
+    int capturedSquare = move.to;
+
+    if(move.type == MoveType::EnPassant){
+        capturedSquare = whiteToMove ? move.to - 8 : move.to + 8;
+    }
+
+    Piece capturedPiece = pieceAtSquare(capturedSquare);
+
+
+
+    undo.movedPiece = movingPiece;
+    undo.capturedPiece = capturedPiece;
+
+    undo.capturedSquare = capturedPiece != PIECE_COUNT ? capturedSquare : -1;
+
+
+
+    undo.castlingRights = castlingRights;
+    undo.enPassantSquare = enPassantSquare;
+    undo.halfmoveClock = halfmoveClock;
+    undo.fullmoveCounter = fullmoveCounter;
+    undo.whiteToMove = whiteToMove;
+
+    if(capturedPiece != PIECE_COUNT){
+        BitUtils::popBit(pieces[capturedPiece], capturedSquare);
+    }
+
+    BitUtils::popBit(pieces[movingPiece], move.from);
+
+    if (move.type == MoveType::Promotion ||
+        move.type == MoveType::PromotionCapture){
+
+        BitUtils::setBit(pieces[move.promotionPiece], move.to);
+
+       } else {
+        BitUtils::setBit(pieces[movingPiece], move.to);
+       }
+
+
+    if (move.type == MoveType::KingCastle ||
+        move.type == MoveType::QueenCastle) {
+
+        bool kingSide = move.type == MoveType::KingCastle;
+
+        int rookFrom;
+        int rookTo;
+
+        if (whiteToMove) {
+            rookFrom = kingSide ? 7 : 0;
+            rookTo = kingSide ? 5 : 3;
+        } else {
+            rookFrom = kingSide ? 63 : 56;
+            rookTo = kingSide ? 61 : 59;
+        }
+
+        Piece rook = whiteToMove ? WHITE_ROOK : BLACK_ROOK;
+
+        BitUtils::popBit(pieces[rook], rookFrom);
+        BitUtils::setBit(pieces[rook], rookTo);
+    }
+
+
+    constexpr std::uint8_t WK = 1 << 3;
+    constexpr std::uint8_t WQ = 1 << 2;
+    constexpr std::uint8_t BK = 1 << 1;
+    constexpr std::uint8_t BQ = 1 << 0;
+
+    if (movingPiece == WHITE_KING) {
+        castlingRights &= ~(WK | WQ);
+    }
+
+    if (movingPiece == BLACK_KING) {
+        castlingRights &= ~(BK | BQ);
+    }
+
+    if (movingPiece == WHITE_ROOK) {
+        if (move.from == 0) castlingRights &= ~WQ;
+        if (move.from == 7) castlingRights &= ~WK;
+    }
+
+    if (movingPiece == BLACK_ROOK) {
+        if (move.from == 56) castlingRights &= ~BQ;
+        if (move.from == 63) castlingRights &= ~BK;
+    }
+
+    if (capturedPiece == WHITE_ROOK) {
+        if (capturedSquare == 0) castlingRights &= ~WQ;
+        if (capturedSquare == 7) castlingRights &= ~WK;
+    }
+
+    if (capturedPiece == BLACK_ROOK) {
+        if (capturedSquare == 56) castlingRights &= ~BQ;
+        if (capturedSquare == 63) castlingRights &= ~BK;
+    }
+
+    enPassantSquare = -1;
+
+    if (move.type == MoveType::DoublePawnPush){
+        enPassantSquare = (move.from + move.to) / 2;
+    }
+
+    if (movingPiece == WHITE_PAWN ||
+        movingPiece == BLACK_PAWN ||
+        capturedPiece != PIECE_COUNT){
+
+            halfmoveClock = 0;
+
+    } else {
+            halfmoveClock++;
+    }
+
+    if(!whiteToMove){
+        fullmoveCounter++;
+    }
+
+    whiteToMove = !whiteToMove;
+
+
+    updateOccupancy();
+}
+
+void Board::unmakeMove(const Move& move, const UndoState& undo) {
+
+    whiteToMove = undo.whiteToMove;
+
+    if (move.type == MoveType::Promotion ||
+        move.type == MoveType::PromotionCapture) {
+
+        BitUtils::popBit(pieces[move.promotionPiece], move.to);
+
+    } else {
+
+        BitUtils::popBit(pieces[undo.movedPiece], move.to);
+
+    }
+
+    BitUtils::setBit(pieces[undo.movedPiece], move.from);
+
+    if (undo.capturedPiece != PIECE_COUNT) {
+
+        BitUtils::setBit(
+            pieces[undo.capturedPiece],
+            undo.capturedSquare
+        );
+
+    }
+
+    if (move.type == MoveType::KingCastle ||
+        move.type == MoveType::QueenCastle) {
+
+        bool kingSide = move.type == MoveType::KingCastle;
+
+        int rookFrom;
+        int rookTo;
+
+        if (whiteToMove) {
+            rookFrom = kingSide ? 7 : 0;
+            rookTo = kingSide ? 5 : 3;
+        } else {
+            rookFrom = kingSide ? 63 : 56;
+            rookTo = kingSide ? 61 : 59;
+        }
+
+        Piece rook = whiteToMove ? WHITE_ROOK : BLACK_ROOK;
+
+        BitUtils::popBit(pieces[rook], rookTo);
+        BitUtils::setBit(pieces[rook], rookFrom);
+    }
+
+    castlingRights = undo.castlingRights;
+    enPassantSquare = undo.enPassantSquare;
+    halfmoveClock = undo.halfmoveClock;
+    fullmoveCounter = undo.fullmoveCounter;
+
+    updateOccupancy();
+}
 
 //FEN IMPLEMENTATION
 
@@ -236,15 +426,15 @@ void Board::loadFEN(const std::string& fen){
 
             case 'Q':
             castlingRights |= 1 << 2;
-            break; 
+            break;
 
             case 'k':
             castlingRights |= 1 << 1;
-            break; 
+            break;
 
             case 'q':
             castlingRights |= 1 << 0;
-            break; 
+            break;
         }
     }
 

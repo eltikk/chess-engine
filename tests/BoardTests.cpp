@@ -1,5 +1,6 @@
 #include "BitUtils.h"
 #include "Board.h"
+#include "Move.h"
 #include "TestUtils.h"
 
 #include <stdexcept>
@@ -153,4 +154,122 @@ TEST_CASE("Rejected FEN leaves the board unchanged") {
     EXPECT_EQ('K', board.getPieceAt(Test::square("e3")));
     EXPECT_EQ(7, board.getHalfmoveClock());
     EXPECT_EQ(42, board.getFullmoveCounter());
+}
+
+TEST_CASE("makeMove handles quiet knight moves") {
+    Board board;
+    UndoState undo;
+
+    Move move{6, 21, MoveType::Quiet}; // Ng1-f3
+
+    board.makeMove(move, undo);
+
+    EXPECT_EQ('.', board.getPieceAt(6));
+    EXPECT_EQ('N', board.getPieceAt(21));
+
+    EXPECT_FALSE(board.isWhiteToMove());
+
+    EXPECT_EQ(1, board.getHalfmoveClock());
+    EXPECT_EQ(1, board.getFullmoveCounter());
+}
+
+TEST_CASE("makeMove and unmakeMove restore the original position") {
+
+    struct Scenario {
+        const char* fen;
+        Move move;
+    };
+
+    const Scenario scenarios[] = {
+        // Quiet move: Ng1-f3
+        {"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", {6, 21, MoveType::Quiet}},
+
+        // Double pawn push: e2-e4
+        {"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+         {12, 28, MoveType::DoublePawnPush}},
+
+        // Capture: Ra1xa8
+        {"r3k3/8/8/8/8/8/8/R3K3 w Qq - 0 1", {0, 56, MoveType::Capture}},
+
+        // En passant: e5xd6
+        {"4k3/8/8/3pP3/8/8/8/4K3 w - d6 0 1", {36, 43, MoveType::EnPassant}},
+
+        // Promotion: a7-a8=Q
+        {"4k3/P7/8/8/8/8/8/4K3 w - - 0 1", {48, 56, MoveType::Promotion, WHITE_QUEEN}},
+
+        // Promotion capture: b7xa8=Q
+        {"r3k3/1P6/8/8/8/8/8/4K3 w - - 0 1", {49, 56, MoveType::PromotionCapture, WHITE_QUEEN}},
+
+        // White kingside castling
+        {"4k3/8/8/8/8/8/8/R3K2R w KQ - 0 1", {4, 6, MoveType::KingCastle}},
+
+        // Black queenside castling
+        {"r3k2r/8/8/8/8/8/8/4K3 b kq - 4 10", {60, 58, MoveType::QueenCastle}}};
+
+    for (const auto& scenario : scenarios) {
+
+        Board board;
+        board.loadFEN(scenario.fen);
+
+        Board original = board;
+        UndoState undo;
+
+        board.makeMove(scenario.move, undo);
+        if (scenario.move.type == MoveType::DoublePawnPush) {
+            EXPECT_EQ(20, board.getEnPassantSquare());
+        }
+
+        if (scenario.move.type == MoveType::KingCastle) {
+            EXPECT_EQ('K', board.getPieceAt(6)); // King on g1
+            EXPECT_EQ('R', board.getPieceAt(5)); // Rook on f1
+
+            EXPECT_EQ('.', board.getPieceAt(4)); // e1 empty
+            EXPECT_EQ('.', board.getPieceAt(7)); // h1 empty
+
+            EXPECT_EQ(0, board.getCastlingRights() & 0b1100);
+        }
+
+        if (scenario.move.type == MoveType::QueenCastle) {
+            EXPECT_EQ('k', board.getPieceAt(58)); // King on c8
+            EXPECT_EQ('r', board.getPieceAt(59)); // Rook on d8
+
+            EXPECT_EQ('.', board.getPieceAt(60)); // e8 empty
+            EXPECT_EQ('.', board.getPieceAt(56)); // a8 empty
+
+            EXPECT_EQ(0, board.getCastlingRights() & 0b0011);
+        }
+
+        // Verify en passant actually removes the captured pawn
+        if (scenario.move.type == MoveType::EnPassant) {
+            EXPECT_EQ('P', board.getPieceAt(43));
+            EXPECT_EQ('.', board.getPieceAt(35));
+        }
+
+        // Verify promotion creates the promoted piece
+        if (scenario.move.type == MoveType::Promotion ||
+            scenario.move.type == MoveType::PromotionCapture) {
+            EXPECT_EQ('Q', board.getPieceAt(56));
+        }
+
+        board.unmakeMove(scenario.move, undo);
+
+        // Compare all 12 piece bitboards
+        for (int p = 0; p < PIECE_COUNT; p++) {
+            Piece piece = static_cast<Piece>(p);
+
+            EXPECT_EQ(original.getPieceBitboard(piece), board.getPieceBitboard(piece));
+        }
+
+        // Compare occupancy
+        EXPECT_EQ(original.getOccupied(), board.getOccupied());
+        EXPECT_EQ(original.getWhitePieces(), board.getWhitePieces());
+        EXPECT_EQ(original.getBlackPieces(), board.getBlackPieces());
+
+        // Compare game state
+        EXPECT_EQ(original.isWhiteToMove(), board.isWhiteToMove());
+        EXPECT_EQ(original.getCastlingRights(), board.getCastlingRights());
+        EXPECT_EQ(original.getEnPassantSquare(), board.getEnPassantSquare());
+        EXPECT_EQ(original.getHalfmoveClock(), board.getHalfmoveClock());
+        EXPECT_EQ(original.getFullmoveCounter(), board.getFullmoveCounter());
+    }
 }

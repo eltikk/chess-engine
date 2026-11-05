@@ -1,4 +1,4 @@
-#pragma once 
+#pragma once
 #include <string>
 #include <cstdint>
 
@@ -20,6 +20,22 @@ enum Piece : std::uint8_t{
     PIECE_COUNT
 };
 
+struct Move; // Forward declaration
+
+struct UndoState{
+    Piece movedPiece = PIECE_COUNT;
+    Piece capturedPiece = PIECE_COUNT;
+    int capturedSquare = -1;
+
+    std::uint8_t castlingRights = 0;
+    int enPassantSquare = -1;
+
+    int halfmoveClock = 0;
+    int fullmoveCounter = 1;
+
+    bool whiteToMove = true;
+};
+
 class Board {
 public:
     Board();
@@ -28,6 +44,8 @@ public:
     void updateOccupancy();
     void print() const;
     void loadFEN(const std::string& fen);
+    void makeMove(const Move& move, UndoState& undo);
+    void unmakeMove(const Move& move, const UndoState& undo);
 
     //Debug getters
     std::uint64_t getPieceBitboard(Piece p) const { return pieces[p]; }
@@ -41,9 +59,9 @@ public:
     int getFullmoveCounter() const { return fullmoveCounter; }
     std::uint8_t getCastlingRights() const { return castlingRights; }
     int getEnPassantSquare() const { return enPassantSquare; }
-    char getPieceAt(int square) const { return pieceAt(square); } 
+    char getPieceAt(int square) const { return pieceAt(square); }
 
-    
+
 private:
     std::uint64_t pieces[PIECE_COUNT]{};
 
@@ -58,4 +76,5 @@ private:
     int enPassantSquare = -1;
 
     char pieceAt(int square) const;
+    Piece pieceAtSquare(int square) const;
 };
