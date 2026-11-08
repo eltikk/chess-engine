@@ -24,6 +24,8 @@ public:
             generatePawnMoves<false>(board, moveList);
         }
     }
+    static void generatePseudoLegalMoves(const Board& board, MoveList& MoveList);
+    
 
     static bool isSquareAttacked(const Board& board, int square, bool byWhite);
     static bool isKingInCheck(const Board& board, bool whiteKing);

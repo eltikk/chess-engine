@@ -165,5 +165,14 @@ TEST_CASE("White kingside castling is blocked by attacked transit square") {
     EXPECT_EQ(0, moves.count);
 }
 
+TEST_CASE("Starting position has 20 pseudo-legal moves") {
+    Board board;
+    MoveList moves;
+
+    MoveGenerator::init();
+    MoveGenerator::generatePseudoLegalMoves(board, moves);
+
+    EXPECT_EQ(20, moves.count);
+}
 
 

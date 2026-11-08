@@ -441,3 +441,13 @@ void MoveGenerator::generateCastlingMoves(const Board& board, MoveList& moveList
         }
     }
 }
+
+void MoveGenerator::generatePseudoLegalMoves(const Board& board, MoveList& moveList){
+    generatePawnMoves(board, moveList);
+    generateKnightMoves(board, moveList);
+    generateBishopMoves(board, moveList);
+    generateRookMoves(board, moveList);
+    generateQueenMoves(board, moveList);
+    generateKingMoves(board, moveList);
+    generateCastlingMoves(board, moveList);
+}
