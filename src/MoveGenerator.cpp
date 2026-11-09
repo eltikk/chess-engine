@@ -451,3 +451,23 @@ void MoveGenerator::generatePseudoLegalMoves(const Board& board, MoveList& moveL
     generateKingMoves(board, moveList);
     generateCastlingMoves(board, moveList);
 }
+
+void MoveGenerator::generateLegalMoves(Board& board, MoveList& legalMoves){
+    MoveList pseudoMoves;
+    generatePseudoLegalMoves(board, pseudoMoves);
+
+    bool whiteToMove = board.isWhiteToMove();
+
+    for(int i = 0; i < pseudoMoves.count; i++){
+        const Move& move = pseudoMoves.moves[i];
+        UndoState undo;
+
+        board.makeMove(move, undo);
+        bool leavesKingInCheck = isKingInCheck(board, whiteToMove);
+        board.unmakeMove(move, undo);
+
+        if(!leavesKingInCheck){
+            legalMoves.add(move);
+        }
+    }
+}

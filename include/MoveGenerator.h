@@ -25,7 +25,7 @@ public:
         }
     }
     static void generatePseudoLegalMoves(const Board& board, MoveList& MoveList);
-    
+    static void generateLegalMoves(Board& board, MoveList& legalMoves);
 
     static bool isSquareAttacked(const Board& board, int square, bool byWhite);
     static bool isKingInCheck(const Board& board, bool whiteKing);

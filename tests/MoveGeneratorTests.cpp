@@ -176,3 +176,124 @@ TEST_CASE("Starting position has 20 pseudo-legal moves") {
 }
 
 
+TEST_CASE("Pinned knight has no legal moves") {
+    Board board;
+    board.loadFEN("4r2k/8/8/8/8/8/4N3/4K3 w - - 0 1"); // knight e2 pinned by rook e8
+
+    MoveList moves;
+
+    MoveGenerator::init();
+    MoveGenerator::generateLegalMoves(board, moves);
+
+    EXPECT_EQ(4, moves.count); // Kd1, Kd2, Kf1, Kf2
+
+    for (int i = 0; i < moves.count; i++) {
+        EXPECT_FALSE(moves.moves[i].from == Test::square("e2"));
+    }
+}
+
+TEST_CASE("King in check only has evasions") {
+    Board board;
+    board.loadFEN("4r2k/8/8/8/8/8/R7/4K3 w - - 0 1");
+
+    MoveList moves;
+
+    MoveGenerator::init();
+    MoveGenerator::generateLegalMoves(board, moves);
+
+    EXPECT_EQ(5, moves.count); // Kd1, Kd2, Kf1, Kf2, Re2
+
+    for (int i = 0; i < moves.count; i++) {
+        EXPECT_FALSE(moves.moves[i].to == Test::square("e2") &&
+                     moves.moves[i].from == Test::square("e1"));
+    }
+}
+
+TEST_CASE("En passant exposing the king is illegal") {
+    Board board;
+    board.loadFEN("8/8/8/K2pP2r/8/8/8/7k w - d6 0 1");
+
+    MoveList pseudoMoves;
+    MoveList legalMoves;
+
+    MoveGenerator::init();
+    MoveGenerator::generatePseudoLegalMoves(board, pseudoMoves);
+    MoveGenerator::generateLegalMoves(board, legalMoves);
+
+    bool pseudoHasEnPassant = false;
+    for (int i = 0; i < pseudoMoves.count; i++) {
+        if (pseudoMoves.moves[i].type == MoveType::EnPassant) {
+            pseudoHasEnPassant = true;
+        }
+    }
+
+    bool legalHasEnPassant = false;
+    for (int i = 0; i < legalMoves.count; i++) {
+        if (legalMoves.moves[i].type == MoveType::EnPassant) {
+            legalHasEnPassant = true;
+        }
+    }
+
+    EXPECT_TRUE(pseudoHasEnPassant);
+    EXPECT_FALSE(legalHasEnPassant);
+}
+
+TEST_CASE("Starting position has 20 legal moves") {
+    Board board;
+    MoveList moves;
+
+    MoveGenerator::init();
+    MoveGenerator::generateLegalMoves(board, moves);
+
+    EXPECT_EQ(20, moves.count);
+}
+
+TEST_CASE("Kiwipete has 48 legal moves including both castles") {
+    Board board;
+    board.loadFEN("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1");
+
+    MoveList moves;
+
+    MoveGenerator::init();
+    MoveGenerator::generateLegalMoves(board, moves);
+
+    EXPECT_EQ(48, moves.count);
+
+    bool hasKingCastle = false;
+    bool hasQueenCastle = false;
+    for (int i = 0; i < moves.count; i++) {
+        if (moves.moves[i].type == MoveType::KingCastle) {
+            hasKingCastle = true;
+        }
+        if (moves.moves[i].type == MoveType::QueenCastle) {
+            hasQueenCastle = true;
+        }
+    }
+
+    EXPECT_TRUE(hasKingCastle);
+    EXPECT_TRUE(hasQueenCastle);
+}
+
+TEST_CASE("Legal move generation leaves the board unchanged") {
+    Board board;
+    board.loadFEN("r3k2r/8/8/3pP3/8/8/8/R3K2R w KQkq d6 5 10");
+
+    Board original = board;
+    MoveList moves;
+
+    MoveGenerator::init();
+    MoveGenerator::generateLegalMoves(board, moves);
+
+    for (int p = 0; p < PIECE_COUNT; p++) {
+        Piece piece = static_cast<Piece>(p);
+
+        EXPECT_EQ(original.getPieceBitboard(piece), board.getPieceBitboard(piece));
+    }
+
+    EXPECT_EQ(original.getOccupied(), board.getOccupied());
+    EXPECT_EQ(original.isWhiteToMove(), board.isWhiteToMove());
+    EXPECT_EQ(original.getCastlingRights(), board.getCastlingRights());
+    EXPECT_EQ(original.getEnPassantSquare(), board.getEnPassantSquare());
+    EXPECT_EQ(original.getHalfmoveClock(), board.getHalfmoveClock());
+    EXPECT_EQ(original.getFullmoveCounter(), board.getFullmoveCounter());
+}
