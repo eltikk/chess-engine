@@ -10,6 +10,7 @@ add_library(chess_engine_core
     src/Board.cpp
     src/MagicBitboards.cpp
     src/MoveGenerator.cpp
+    src/Perft.cpp
 )
 
 target_include_directories(chess_engine_core PUBLIC
