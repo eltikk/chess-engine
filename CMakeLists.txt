@@ -11,6 +11,7 @@ add_library(chess_engine_core
     src/MagicBitboards.cpp
     src/MoveGenerator.cpp
     src/Perft.cpp
+    src/Move.cpp
 )
 
 target_include_directories(chess_engine_core PUBLIC
@@ -23,6 +24,11 @@ add_executable(chess_engine
 
 target_link_libraries(chess_engine PRIVATE chess_engine_core)
 
+add_executable(chess_perft
+    src/perft_main.cpp
+)
+
+target_link_libraries(chess_perft PRIVATE chess_engine_core)
 include(CTest)
 
 if(BUILD_TESTING)

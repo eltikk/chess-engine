@@ -59,3 +59,49 @@ TEST_CASE("Perft Position 4") {
     EXPECT_EQ(9467ULL, Perft::run(board, 3));
     EXPECT_EQ(422333ULL, Perft::run(board, 4));
 }
+
+TEST_CASE("Perft Divide starting position") {
+    Board board;
+    MoveGenerator::init();
+
+    auto results = Perft::divide(board, 3);
+
+    EXPECT_EQ(20, static_cast<int>(results.size()));
+
+    std::uint64_t total = 0;
+
+    for (const auto& entry : results) {
+        total += entry.nodes;
+    }
+
+    EXPECT_EQ(8902ULL, total);
+
+    auto findNodes = [&](int from, int to) -> std::uint64_t {
+        for (const auto& entry : results) {
+            if (entry.move.from == from && entry.move.to == to) {
+                return entry.nodes;
+            }
+        }
+
+        return 0;
+    };
+
+    EXPECT_EQ(600ULL, findNodes(Test::square("e2"), Test::square("e4")));
+    EXPECT_EQ(560ULL, findNodes(Test::square("d2"), Test::square("d4")));
+    EXPECT_EQ(440ULL, findNodes(Test::square("g1"), Test::square("f3")));
+    EXPECT_EQ(380ULL, findNodes(Test::square("a2"), Test::square("a3")));
+}
+
+TEST_CASE("Move converts to UCI notation") {
+    Move pawnMove{12, 28, MoveType::DoublePawnPush};
+
+    EXPECT_EQ(std::string("e2e4"), pawnMove.toUCI());
+
+    Move knightMove{6, 21, MoveType::Quiet};
+
+    EXPECT_EQ(std::string("g1f3"), knightMove.toUCI());
+
+    Move promotion{48, 56, MoveType::Promotion, WHITE_QUEEN};
+
+    EXPECT_EQ(std::string("a7a8q"), promotion.toUCI());
+}

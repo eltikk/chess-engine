@@ -25,3 +25,30 @@ std::uint64_t Perft::run(Board& board, int depth){
 
     return nodes;
 }
+
+std::vector<PerftEntry> Perft::divide(Board& board, int depth) {
+    std::vector<PerftEntry> results;
+
+    if (depth < 1) {
+        return results;
+    }
+
+    MoveList moves;
+    MoveGenerator::generateLegalMoves(board, moves);
+
+    for (int i = 0; i < moves.count; i++) {
+        const Move& move = moves.moves[i];
+
+        UndoState undo;
+
+        board.makeMove(move, undo);
+
+        std::uint64_t nodes = run(board, depth - 1);
+
+        board.unmakeMove(move, undo);
+
+        results.push_back({move, nodes});
+    }
+
+    return results;
+}
