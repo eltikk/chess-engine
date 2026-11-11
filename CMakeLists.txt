@@ -12,7 +12,8 @@ add_library(chess_engine_core
     src/MoveGenerator.cpp
     src/Perft.cpp
     src/Move.cpp
-)
+    src/Evaluation.cpp
+)  
 
 target_include_directories(chess_engine_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
