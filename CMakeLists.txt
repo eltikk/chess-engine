@@ -14,7 +14,7 @@ add_library(chess_engine_core
     src/Move.cpp
     src/Evaluation.cpp
     src/Search.cpp
-)  
+)
 
 target_include_directories(chess_engine_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -53,4 +53,14 @@ if(BUILD_TESTING)
         NAME chess_engine_tests
         COMMAND chess_engine_tests
     )
+
+    find_package(Python3 COMPONENTS Interpreter REQUIRED)
+
+    add_test(
+        NAME uci_integration
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/UCIIntegrationTests.py
+                $<TARGET_FILE:chess_engine>
+    )
+
 endif()
