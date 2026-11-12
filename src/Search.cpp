@@ -65,12 +65,113 @@ int scoreMove(const Board& board, const Move& move) {
     }
 }
 
+int quiescence(Board& board, int alpha, int beta, int ply, std::uint64_t* qNodes) {
+    if (qNodes != nullptr) {
+        ++(*qNodes);
+    }
+
+    constexpr int mateScore = 100000;
+    constexpr int maxQuiescencePly = 64;
+
+    bool inCheck = MoveGenerator::isKingInCheck(board, board.isWhiteToMove());
+
+    MoveList moves;
+    MoveGenerator::generateLegalMoves(board, moves);
+
+    if (moves.count == 0) {
+        if (inCheck) {
+            return -mateScore + ply;
+        }
+        return 0;
+    }
+
+    if (!inCheck) {
+        int standPat = Evaluation::evaluate(board);
+
+        if (!board.isWhiteToMove()) {
+            standPat = -standPat;
+        }
+
+        if (standPat >= beta) {
+            return standPat;
+        }
+
+        if (standPat > alpha) {
+            alpha = standPat;
+        }
+    }
+
+    if (ply >= maxQuiescencePly) {
+        if (!inCheck) {
+            return alpha;
+        }
+
+        int bestScore = std::numeric_limits<int>::min();
+
+        for (int i = 0; i < moves.count; ++i) {
+            const Move& move = moves.moves[i];
+
+            UndoState undo;
+            board.makeMove(move, undo);
+
+            int score = Evaluation::evaluate(board);
+
+            if (!undo.whiteToMove) {
+                score = -score;
+            }
+
+            board.unmakeMove(move, undo);
+
+            if (score > bestScore) {
+                bestScore = score;
+            }
+        }
+
+        return bestScore;
+    }
+
+    std::sort(moves.moves, moves.moves + moves.count, [&board](const Move& a, const Move& b) {
+        return scoreMove(board, a) > scoreMove(board, b);
+    });
+
+    for (int i = 0; i < moves.count; ++i) {
+        const Move& move = moves.moves[i];
+
+        if (!inCheck && move.type != MoveType::Capture && move.type != MoveType::PromotionCapture &&
+            move.type != MoveType::EnPassant && move.type != MoveType::Promotion) {
+            continue;
+        }
+
+        UndoState undo;
+
+        board.makeMove(move, undo);
+
+        int score = -quiescence(board, -beta, -alpha, ply + 1, qNodes);
+
+        board.unmakeMove(move, undo);
+
+        if (score >= beta) {
+            return score;
+        }
+
+        if (score > alpha) {
+            alpha = score;
+        }
+    }
+
+    return alpha;
+}
+
 } // namespace
 
-int Search::negamax(Board& board, int depth, int ply, int alpha, int beta, std::uint64_t* nodes) {
+int Search::negamax(Board& board, int depth, int ply, int alpha, int beta, std::uint64_t* nodes, std::uint64_t* qNodes) {
     if (nodes != nullptr) {
         ++(*nodes);
     }
+
+    if (depth <= 0) {
+    return quiescence(board, alpha, beta, ply, qNodes);
+}
 
     constexpr int mateScore = 100000;
 
@@ -84,11 +185,6 @@ int Search::negamax(Board& board, int depth, int ply, int alpha, int beta, std::
         return 0;
     }
 
-    if (depth <= 0) {
-        int score = Evaluation::evaluate(board);
-        return board.isWhiteToMove() ? score : -score;
-    }
-
     std::sort(moves.moves, moves.moves + moves.count, [&board](const Move& a, const Move& b) {
         return scoreMove(board, a) > scoreMove(board, b);
     });
@@ -100,7 +196,7 @@ int Search::negamax(Board& board, int depth, int ply, int alpha, int beta, std::
         UndoState undo;
 
         board.makeMove(move, undo);
-        int score = -negamax(board, depth - 1, ply + 1, -beta, -alpha, nodes);
+        int score = -negamax(board, depth - 1, ply + 1, -beta, -alpha, nodes, qNodes);
         board.unmakeMove(move, undo);
 
         if (score > bestScore) {

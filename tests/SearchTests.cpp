@@ -9,6 +9,10 @@ int negamaxWithoutPruning(Board& board, int depth, int ply = 0, std::uint64_t* n
         ++(*nodes);
     }
 
+    if (depth <= 0) {
+        return Search::negamax(board, 0, ply);
+    }
+
     constexpr int mateScore = 100000;
 
     MoveList moves;
@@ -19,11 +23,6 @@ int negamaxWithoutPruning(Board& board, int depth, int ply = 0, std::uint64_t* n
             return -mateScore + ply;
         }
         return 0;
-    }
-
-    if (depth <= 0) {
-        int score = Evaluation::evaluate(board);
-        return board.isWhiteToMove() ? score : -score;
     }
 
     int bestScore = std::numeric_limits<int>::min();
@@ -110,13 +109,9 @@ TEST_CASE("Alpha-beta searches fewer nodes") {
     std::uint64_t originalNodes = 0;
     std::uint64_t alphaBetaNodes = 0;
 
-    int originalScore = negamaxWithoutPruning(
-        board, depth, 0, &originalNodes
-    );
+    int originalScore = negamaxWithoutPruning(board, depth, 0, &originalNodes);
 
-    int alphaBetaScore = Search::negamax(
-        board, depth, 0, -1000000, 1000000, &alphaBetaNodes
-    );
+    int alphaBetaScore = Search::negamax(board, depth, 0, -1000000, 1000000, &alphaBetaNodes);
 
     EXPECT_EQ(originalScore, alphaBetaScore);
     EXPECT_TRUE(alphaBetaNodes <= originalNodes);
@@ -139,19 +134,14 @@ TEST_CASE("Alpha-beta matches Negamax in tactical position") {
     std::uint64_t originalNodes = 0;
     std::uint64_t alphaBetaNodes = 0;
 
-    int originalScore = negamaxWithoutPruning(
-        board, depth, 0, &originalNodes
-    );
+    int originalScore = negamaxWithoutPruning(board, depth, 0, &originalNodes);
 
-    int alphaBetaScore = Search::negamax(
-        board, depth, 0, -1000000, 1000000, &alphaBetaNodes
-    );
+    int alphaBetaScore = Search::negamax(board, depth, 0, -1000000, 1000000, &alphaBetaNodes);
 
     EXPECT_EQ(originalScore, alphaBetaScore);
     EXPECT_TRUE(alphaBetaNodes <= originalNodes);
 
-    double reduction = 100.0 *
-        (originalNodes - alphaBetaNodes) / originalNodes;
+    double reduction = 100.0 * (originalNodes - alphaBetaNodes) / originalNodes;
 
     std::cout << "\nTactical position (depth " << depth << ")\n";
     std::cout << "Original nodes: " << originalNodes << '\n';
@@ -168,10 +158,7 @@ TEST_CASE("Alpha-beta restores board after searching") {
     for (int i = WHITE_PAWN; i < PIECE_COUNT; ++i) {
         Piece piece = static_cast<Piece>(i);
 
-        EXPECT_EQ(
-            original.getPieceBitboard(piece),
-            board.getPieceBitboard(piece)
-        );
+        EXPECT_EQ(original.getPieceBitboard(piece), board.getPieceBitboard(piece));
     }
 
     EXPECT_EQ(original.isWhiteToMove(), board.isWhiteToMove());
@@ -187,5 +174,128 @@ TEST_CASE("Search prefers capturing rook over pawn") {
 
     if (bestMove) {
         EXPECT_EQ(std::string("c4f7"), bestMove->toUCI());
+    }
+}
+
+TEST_CASE("Quiescence searches captures at depth zero") {
+    Board board;
+    board.loadFEN("4k3/8/8/8/4q3/8/4R3/4K3 w - - 0 1");
+
+    int staticScore = Evaluation::evaluate(board);
+    int quiescenceScore = Search::negamax(board, 0);
+
+    EXPECT_TRUE(quiescenceScore > staticScore);
+    EXPECT_TRUE(quiescenceScore > 0);
+}
+
+TEST_CASE("Quiescence searches quiet check evasions") {
+    Board board;
+    board.loadFEN("7k/8/6K1/8/8/8/8/7R b - - 0 1");
+
+    MoveList moves;
+    MoveGenerator::generateLegalMoves(board, moves);
+
+    EXPECT_EQ(1, moves.count);
+
+    if (moves.count == 1) {
+        EXPECT_EQ(std::string("h8g8"), moves.moves[0].toUCI());
+
+        UndoState undo;
+        board.makeMove(moves.moves[0], undo);
+
+        int expectedScore = -Evaluation::evaluate(board);
+
+        board.unmakeMove(moves.moves[0], undo);
+
+        int actualScore = Search::negamax(board, 0);
+
+        EXPECT_EQ(expectedScore, actualScore);
+    }
+}
+
+TEST_CASE("Quiescence restores complete board state") {
+    Board board;
+    board.loadFEN("4k3/8/8/8/4q3/8/4R3/4K3 w - - 12 24");
+
+    Board original = board;
+
+    Search::negamax(board, 0);
+
+    for (int i = WHITE_PAWN; i < PIECE_COUNT; ++i) {
+        Piece piece = static_cast<Piece>(i);
+
+        EXPECT_EQ(original.getPieceBitboard(piece), board.getPieceBitboard(piece));
+    }
+
+    EXPECT_EQ(original.isWhiteToMove(), board.isWhiteToMove());
+    EXPECT_EQ(original.getCastlingRights(), board.getCastlingRights());
+    EXPECT_EQ(original.getEnPassantSquare(), board.getEnPassantSquare());
+    EXPECT_EQ(original.getHalfmoveClock(), board.getHalfmoveClock());
+    EXPECT_EQ(original.getFullmoveCounter(), board.getFullmoveCounter());
+}
+
+TEST_CASE("Quiescence counts additional search nodes") {
+    Board board;
+    board.loadFEN("4k3/8/8/8/4q3/8/4R3/4K3 w - - 0 1");
+
+    std::uint64_t nodes = 0;
+    std::uint64_t qNodes = 0;
+
+    Search::negamax(
+        board,
+        0,
+        0,
+        -1000000,
+        1000000,
+        &nodes,
+        &qNodes
+    );
+
+    EXPECT_EQ(1ULL, nodes);
+    EXPECT_TRUE(qNodes >= 2);
+}
+
+TEST_CASE("Quiescence stops searching captures at maximum ply") {
+    Board board;
+    board.loadFEN("4k3/8/8/8/4q3/8/4R3/4K3 w - - 0 1");
+
+    int staticScore = Evaluation::evaluate(board);
+
+    std::uint64_t qNodes = 0;
+
+    int score = Search::negamax(
+        board, 0, 64, -1000000, 1000000, nullptr, &qNodes
+    );
+
+    EXPECT_EQ(staticScore, score);
+    EXPECT_EQ(1ULL, qNodes);
+}
+
+TEST_CASE("Quiescence handles check at maximum ply") {
+    Board board;
+    board.loadFEN("7k/8/6K1/8/8/8/8/7R b - - 0 1");
+
+    MoveList moves;
+    MoveGenerator::generateLegalMoves(board, moves);
+
+    EXPECT_EQ(1, moves.count);
+
+    if (moves.count == 1) {
+        UndoState undo;
+
+        board.makeMove(moves.moves[0], undo);
+
+        int expectedScore = -Evaluation::evaluate(board);
+
+        board.unmakeMove(moves.moves[0], undo);
+
+        std::uint64_t qNodes = 0;
+
+        int actualScore = Search::negamax(
+            board, 0, 64, -1000000, 1000000, nullptr, &qNodes
+        );
+
+        EXPECT_EQ(expectedScore, actualScore);
+        EXPECT_EQ(1ULL, qNodes);
     }
 }
