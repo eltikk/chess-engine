@@ -176,3 +176,16 @@ TEST_CASE("Alpha-beta restores board after searching") {
 
     EXPECT_EQ(original.isWhiteToMove(), board.isWhiteToMove());
 }
+
+TEST_CASE("Search prefers capturing rook over pawn") {
+    Board board;
+    board.loadFEN("k7/5r2/8/1p6/2B5/8/8/4K3 w - - 0 1");
+
+    auto bestMove = Search::findBestMove(board, 1);
+
+    EXPECT_TRUE(bestMove.has_value());
+
+    if (bestMove) {
+        EXPECT_EQ(std::string("c4f7"), bestMove->toUCI());
+    }
+}

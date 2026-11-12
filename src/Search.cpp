@@ -1,8 +1,71 @@
 #include "Search.h"
 #include "Evaluation.h"
 #include "MoveGenerator.h"
-
+#include <algorithm>
 #include <limits>
+
+namespace {
+
+int pieceValue(char piece) {
+    switch (piece) {
+    case 'P':
+    case 'p':
+        return 100;
+
+    case 'N':
+    case 'n':
+        return 320;
+
+    case 'B':
+    case 'b':
+        return 330;
+
+    case 'R':
+    case 'r':
+        return 500;
+
+    case 'Q':
+    case 'q':
+        return 900;
+
+    default:
+        return 0;
+    }
+}
+
+int scoreMove(const Board& board, const Move& move) {
+    constexpr int pieceValues[6] = {100, 320, 330, 500, 900, 0};
+
+    switch (move.type) {
+    case MoveType::PromotionCapture: {
+        int victim = pieceValue(board.getPieceAt(move.to));
+        int promotion = pieceValues[move.promotionPiece % 6];
+
+        return 30000 + victim * 10 + promotion;
+    }
+
+    case MoveType::Promotion: {
+        int promotion = pieceValues[move.promotionPiece % 6];
+
+        return 20000 + promotion;
+    }
+
+    case MoveType::Capture: {
+        int attacker = pieceValue(board.getPieceAt(move.from));
+        int victim = pieceValue(board.getPieceAt(move.to));
+
+        return 10000 + victim * 10 - attacker;
+    }
+
+    case MoveType::EnPassant:
+        return 10900;
+
+    default:
+        return 0;
+    }
+}
+
+} // namespace
 
 int Search::negamax(Board& board, int depth, int ply, int alpha, int beta, std::uint64_t* nodes) {
     if (nodes != nullptr) {
@@ -25,6 +88,10 @@ int Search::negamax(Board& board, int depth, int ply, int alpha, int beta, std::
         int score = Evaluation::evaluate(board);
         return board.isWhiteToMove() ? score : -score;
     }
+
+    std::sort(moves.moves, moves.moves + moves.count, [&board](const Move& a, const Move& b) {
+        return scoreMove(board, a) > scoreMove(board, b);
+    });
 
     int bestScore = std::numeric_limits<int>::min();
 
@@ -83,6 +150,9 @@ std::optional<Move> Search::findBestMove(Board& board, int depth) {
         if (score > bestScore) {
             bestScore = score;
             bestMove = move;
+        }
+        if (score > alpha) {
+            alpha = score;
         }
     }
 
