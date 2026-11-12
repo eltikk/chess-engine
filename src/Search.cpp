@@ -4,7 +4,11 @@
 
 #include <limits>
 
-int Search::negamax(Board& board, int depth, int ply) {
+int Search::negamax(Board& board, int depth, int ply, int alpha, int beta, std::uint64_t* nodes) {
+    if (nodes != nullptr) {
+        ++(*nodes);
+    }
+
     constexpr int mateScore = 100000;
 
     MoveList moves;
@@ -29,11 +33,19 @@ int Search::negamax(Board& board, int depth, int ply) {
         UndoState undo;
 
         board.makeMove(move, undo);
-        int score = -negamax(board, depth - 1, ply + 1);
+        int score = -negamax(board, depth - 1, ply + 1, -beta, -alpha, nodes);
         board.unmakeMove(move, undo);
 
         if (score > bestScore) {
             bestScore = score;
+        }
+
+        if (score > alpha) {
+            alpha = score;
+        }
+
+        if (alpha >= beta) {
+            break;
         }
     }
 
@@ -52,6 +64,11 @@ std::optional<Move> Search::findBestMove(Board& board, int depth) {
         return std::nullopt;
     }
 
+    constexpr int infinity = 1000000;
+
+    int alpha = -infinity;
+    int beta = infinity;
+
     int bestScore = std::numeric_limits<int>::min();
     std::optional<Move> bestMove;
 
@@ -60,7 +77,7 @@ std::optional<Move> Search::findBestMove(Board& board, int depth) {
         UndoState undo;
 
         board.makeMove(move, undo);
-        int score = -negamax(board, depth - 1, 1);
+        int score = -negamax(board, depth - 1, 1, -beta, -alpha);
         board.unmakeMove(move, undo);
 
         if (score > bestScore) {
