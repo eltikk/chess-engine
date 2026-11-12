@@ -39,3 +39,35 @@ int Search::negamax(Board& board, int depth, int ply) {
 
     return bestScore;
 }
+
+std::optional<Move> Search::findBestMove(Board& board, int depth) {
+    if (depth <= 0) {
+        return std::nullopt;
+    }
+
+    MoveList moves;
+    MoveGenerator::generateLegalMoves(board, moves);
+
+    if (moves.count == 0) {
+        return std::nullopt;
+    }
+
+    int bestScore = std::numeric_limits<int>::min();
+    std::optional<Move> bestMove;
+
+    for (int i = 0; i < moves.count; ++i) {
+        const Move& move = moves.moves[i];
+        UndoState undo;
+
+        board.makeMove(move, undo);
+        int score = -negamax(board, depth - 1, 1);
+        board.unmakeMove(move, undo);
+
+        if (score > bestScore) {
+            bestScore = score;
+            bestMove = move;
+        }
+    }
+
+    return bestMove;
+}
