@@ -131,6 +131,10 @@ std::optional<Move> Search::findBestMove(Board& board, int depth) {
         return std::nullopt;
     }
 
+    std::sort(moves.moves, moves.moves + moves.count, [&board](const Move& a, const Move& b) {
+        return scoreMove(board, a) > scoreMove(board, b);
+    });
+
     constexpr int infinity = 1000000;
 
     int alpha = -infinity;
