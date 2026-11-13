@@ -215,8 +215,8 @@ int Search::negamax(Board& board, int depth, int ply, int alpha, int beta, std::
     return bestScore;
 }
 
-std::optional<Move> Search::findBestMove(Board& board, int depth) {
-    if (depth <= 0) {
+std::optional<Move> Search::findBestMove(Board& board, int maxDepth) {
+    if (maxDepth <= 0) {
         return std::nullopt;
     }
 
@@ -227,33 +227,63 @@ std::optional<Move> Search::findBestMove(Board& board, int depth) {
         return std::nullopt;
     }
 
-    std::sort(moves.moves, moves.moves + moves.count, [&board](const Move& a, const Move& b) {
-        return scoreMove(board, a) > scoreMove(board, b);
-    });
+    // Initial move ordering
+    std::sort(moves.moves, moves.moves + moves.count,
+        [&board](const Move& a, const Move& b) {
+            return scoreMove(board, a) > scoreMove(board, b);
+        });
 
     constexpr int infinity = 1000000;
 
-    int alpha = -infinity;
-    int beta = infinity;
-
-    int bestScore = std::numeric_limits<int>::min();
     std::optional<Move> bestMove;
 
-    for (int i = 0; i < moves.count; ++i) {
-        const Move& move = moves.moves[i];
-        UndoState undo;
+    // Iterative deepening
+    for (int depth = 1; depth <= maxDepth; ++depth) {
 
-        board.makeMove(move, undo);
-        int score = -negamax(board, depth - 1, 1, -beta, -alpha);
-        board.unmakeMove(move, undo);
+        // Search the previous iteration's best move first
+        if (bestMove.has_value()) {
+            for (int i = 0; i < moves.count; ++i) {
+                if (moves.moves[i].toUCI() == bestMove->toUCI()) {
+                    std::swap(moves.moves[0], moves.moves[i]);
+                    break;
+                }
+            }
+        }
 
-        if (score > bestScore) {
-            bestScore = score;
-            bestMove = move;
+        int alpha = -infinity;
+        int beta = infinity;
+        int bestScore = -infinity;
+
+        std::optional<Move> iterationBestMove;
+
+        for (int i = 0; i < moves.count; ++i) {
+            const Move& move = moves.moves[i];
+
+            UndoState undo;
+            board.makeMove(move, undo);
+
+            int score = -negamax(
+                board,
+                depth - 1,
+                1,
+                -beta,
+                -alpha
+            );
+
+            board.unmakeMove(move, undo);
+
+            if (score > bestScore) {
+                bestScore = score;
+                iterationBestMove = move;
+            }
+
+            if (score > alpha) {
+                alpha = score;
+            }
         }
-        if (score > alpha) {
-            alpha = score;
-        }
+
+        // Save the result of the completed iteration
+        bestMove = iterationBestMove;
     }
 
     return bestMove;
