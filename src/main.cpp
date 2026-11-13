@@ -128,7 +128,11 @@ int main() {
                 continue;
             }
 
-            auto bestMove = Search::findBestMove(board, depth);
+            auto bestMove =
+                Search::findBestMove(board, depth, [](int completedDepth, const Move& move) {
+                    std::cout << "info depth " << completedDepth << " pv " << move.toUCI() << '\n'
+                              << std::flush;
+                });
 
             if (bestMove.has_value()) {
                 std::cout << "bestmove " << bestMove->toUCI() << '\n';

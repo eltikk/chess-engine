@@ -3,6 +3,7 @@
 #include "MoveGenerator.h"
 #include <algorithm>
 #include <limits>
+#include <string>
 
 namespace {
 
@@ -164,14 +165,15 @@ int quiescence(Board& board, int alpha, int beta, int ply, std::uint64_t* qNodes
 
 } // namespace
 
-int Search::negamax(Board& board, int depth, int ply, int alpha, int beta, std::uint64_t* nodes, std::uint64_t* qNodes) {
+int Search::negamax(Board& board, int depth, int ply, int alpha, int beta, std::uint64_t* nodes,
+                    std::uint64_t* qNodes) {
     if (nodes != nullptr) {
         ++(*nodes);
     }
 
     if (depth <= 0) {
-    return quiescence(board, alpha, beta, ply, qNodes);
-}
+        return quiescence(board, alpha, beta, ply, qNodes);
+    }
 
     constexpr int mateScore = 100000;
 
@@ -215,7 +217,8 @@ int Search::negamax(Board& board, int depth, int ply, int alpha, int beta, std::
     return bestScore;
 }
 
-std::optional<Move> Search::findBestMove(Board& board, int maxDepth) {
+std::optional<Move> Search::findBestMove(Board& board, int maxDepth,
+                                         const IterationCallback& onIteration) {
     if (maxDepth <= 0) {
         return std::nullopt;
     }
@@ -228,10 +231,9 @@ std::optional<Move> Search::findBestMove(Board& board, int maxDepth) {
     }
 
     // Initial move ordering
-    std::sort(moves.moves, moves.moves + moves.count,
-        [&board](const Move& a, const Move& b) {
-            return scoreMove(board, a) > scoreMove(board, b);
-        });
+    std::sort(moves.moves, moves.moves + moves.count, [&board](const Move& a, const Move& b) {
+        return scoreMove(board, a) > scoreMove(board, b);
+    });
 
     constexpr int infinity = 1000000;
 
@@ -262,13 +264,7 @@ std::optional<Move> Search::findBestMove(Board& board, int maxDepth) {
             UndoState undo;
             board.makeMove(move, undo);
 
-            int score = -negamax(
-                board,
-                depth - 1,
-                1,
-                -beta,
-                -alpha
-            );
+            int score = -negamax(board, depth - 1, 1, -beta, -alpha);
 
             board.unmakeMove(move, undo);
 
@@ -282,8 +278,11 @@ std::optional<Move> Search::findBestMove(Board& board, int maxDepth) {
             }
         }
 
-        // Save the result of the completed iteration
         bestMove = iterationBestMove;
+
+        if (bestMove.has_value() && onIteration) {
+            onIteration(depth, *bestMove);
+        }
     }
 
     return bestMove;
