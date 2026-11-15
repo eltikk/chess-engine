@@ -3,6 +3,7 @@
 #include "MoveList.h"
 #include "Search.h"
 
+#include <cstdlib>
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -15,24 +16,20 @@ int main() {
 
     while (std::getline(std::cin, command)) {
 
-        // UCI initialization
         if (command == "uci") {
             std::cout << "id name EltiChess\n";
             std::cout << "id author Elti\n";
             std::cout << "uciok\n" << std::flush;
         }
 
-        // Check if engine is ready
         else if (command == "isready") {
             std::cout << "readyok\n" << std::flush;
         }
 
-        // Start a new game
         else if (command == "ucinewgame") {
             board.setStartingPosition();
         }
 
-        // Set up a position
         else if (command.rfind("position ", 0) == 0) {
             std::istringstream input(command);
             std::string token;
@@ -79,7 +76,6 @@ int main() {
                 continue;
             }
 
-            // Check whether moves follow the position
             if (!(input >> token)) {
                 continue;
             }
@@ -89,7 +85,6 @@ int main() {
                 continue;
             }
 
-            // Apply moves one by one
             while (input >> token) {
                 MoveList legalMoves;
                 MoveGenerator::generateLegalMoves(board, legalMoves);
@@ -129,8 +124,27 @@ int main() {
             }
 
             auto bestMove =
-                Search::findBestMove(board, depth, [](int completedDepth, const Move& move) {
-                    std::cout << "info depth " << completedDepth << " pv " << move.toUCI() << '\n'
+                Search::findBestMove(board, depth, [](const Search::IterationInfo& info) {
+                    constexpr int mateScore = 100000;
+                    constexpr int mateThreshold = mateScore - 1000;
+
+                    std::cout << "info depth " << info.depth;
+
+                    if (std::abs(info.score) >= mateThreshold) {
+                        int pliesToMate = mateScore - std::abs(info.score);
+                        int movesToMate = (pliesToMate + 1) / 2;
+
+                        if (info.score < 0) {
+                            movesToMate = -movesToMate;
+                        }
+
+                        std::cout << " score mate " << movesToMate;
+                    } else {
+                        std::cout << " score cp " << info.score;
+                    }
+
+                    std::cout << " nodes " << info.nodes << " time " << info.timeMs << " nps "
+                              << info.nps << " pv " << info.bestMove.toUCI() << '\n'
                               << std::flush;
                 });
 
@@ -143,7 +157,6 @@ int main() {
             std::cout << std::flush;
         }
 
-        // Exit engine
         else if (command == "quit") {
             break;
         }

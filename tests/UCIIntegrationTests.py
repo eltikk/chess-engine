@@ -42,7 +42,7 @@ def assert_search_output(output, depth):
 
     for i in range(depth):
         assert re.fullmatch(
-            rf"info depth {i + 1} pv [a-h][1-8][a-h][1-8][qrbn]?",
+            rf"info depth {i + 1} score (?:cp|mate) -?\d+ nodes \d+ time \d+ nps \d+ pv [a-h][1-8][a-h][1-8][qrbn]?",
             output[i],
         )
 
@@ -50,6 +50,7 @@ def assert_search_output(output, depth):
         r"bestmove [a-h][1-8][a-h][1-8][qrbn]?",
         output[-1],
     )
+
 
 assert_search_output(output, 3)
 
@@ -73,5 +74,35 @@ output = run_uci(
 )
 
 assert output == ["bestmove 0000"]
+
+# Test 5: Search statistics
+output = run_uci(
+    [
+        "position startpos",
+        "go depth 4",
+    ]
+)
+
+assert_search_output(output, 4)
+
+nodes = []
+times = []
+
+for line in output[:-1]:
+    match = re.search(
+        r"nodes (\d+) time (\d+) nps (\d+)",
+        line,
+    )
+
+    assert match is not None
+
+    nodes.append(int(match.group(1)))
+    times.append(int(match.group(2)))
+
+# Cumulative nodes must increase with each iteration
+assert all(nodes[i] > nodes[i - 1] for i in range(1, len(nodes)))
+
+# Cumulative elapsed time must not decrease
+assert all(times[i] >= times[i - 1] for i in range(1, len(times)))
 
 print("All UCI integration tests passed!")

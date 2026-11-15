@@ -8,7 +8,16 @@
 
 class Search {
   public:
-    using IterationCallback = std::function<void(int, const Move&)>;
+    struct IterationInfo {
+        int depth;
+        Move bestMove;
+        int score;
+        std::uint64_t nodes;
+        std::uint64_t timeMs;
+        std::uint64_t nps;
+    };
+
+    using IterationCallback = std::function<void(const IterationInfo&)>;
 
     static int negamax(Board& board, int depth, int ply = 0, int alpha = -1000000,
                        int beta = 1000000, std::uint64_t* nodes = nullptr,

@@ -251,7 +251,7 @@ TEST_CASE("Quiescence counts additional search nodes") {
         &qNodes
     );
 
-    EXPECT_EQ(1ULL, nodes);
+    EXPECT_EQ(0ULL, nodes);
     EXPECT_TRUE(qNodes >= 2);
 }
 

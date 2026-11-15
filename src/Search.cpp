@@ -2,6 +2,7 @@
 #include "Evaluation.h"
 #include "MoveGenerator.h"
 #include <algorithm>
+#include <chrono>
 #include <limits>
 #include <string>
 
@@ -167,12 +168,14 @@ int quiescence(Board& board, int alpha, int beta, int ply, std::uint64_t* qNodes
 
 int Search::negamax(Board& board, int depth, int ply, int alpha, int beta, std::uint64_t* nodes,
                     std::uint64_t* qNodes) {
-    if (nodes != nullptr) {
-        ++(*nodes);
-    }
 
+    // Leaf nodes are counted in qNodes by quiescence, so check depth before counting here.
     if (depth <= 0) {
         return quiescence(board, alpha, beta, ply, qNodes);
+    }
+
+    if (nodes != nullptr) {
+        ++(*nodes);
     }
 
     constexpr int mateScore = 100000;
@@ -230,7 +233,6 @@ std::optional<Move> Search::findBestMove(Board& board, int maxDepth,
         return std::nullopt;
     }
 
-    // Initial move ordering
     std::sort(moves.moves, moves.moves + moves.count, [&board](const Move& a, const Move& b) {
         return scoreMove(board, a) > scoreMove(board, b);
     });
@@ -239,8 +241,15 @@ std::optional<Move> Search::findBestMove(Board& board, int maxDepth,
 
     std::optional<Move> bestMove;
 
+    std::uint64_t totalNodes = 0;
+
+    const auto startTime = std::chrono::steady_clock::now();
+
     // Iterative deepening
     for (int depth = 1; depth <= maxDepth; ++depth) {
+
+        std::uint64_t nodes = 1; // Count the root
+        std::uint64_t qNodes = 0;
 
         // Search the previous iteration's best move first
         if (bestMove.has_value()) {
@@ -264,7 +273,7 @@ std::optional<Move> Search::findBestMove(Board& board, int maxDepth,
             UndoState undo;
             board.makeMove(move, undo);
 
-            int score = -negamax(board, depth - 1, 1, -beta, -alpha);
+            int score = -negamax(board, depth - 1, 1, -beta, -alpha, &nodes, &qNodes);
 
             board.unmakeMove(move, undo);
 
@@ -280,8 +289,18 @@ std::optional<Move> Search::findBestMove(Board& board, int maxDepth,
 
         bestMove = iterationBestMove;
 
+        totalNodes += nodes + qNodes;
+
+        const auto elapsedUs = std::chrono::duration_cast<std::chrono::microseconds>(
+                                   std::chrono::steady_clock::now() - startTime)
+                                   .count();
+
+        const std::uint64_t timeMs = elapsedUs / 1000;
+
+        const std::uint64_t nps = elapsedUs > 0 ? totalNodes * 1000000ULL / elapsedUs : 0;
+
         if (bestMove.has_value() && onIteration) {
-            onIteration(depth, *bestMove);
+            onIteration(IterationInfo{depth, *bestMove, bestScore, totalNodes, timeMs, nps});
         }
     }
 
