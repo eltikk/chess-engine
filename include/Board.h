@@ -34,6 +34,8 @@ struct UndoState{
     int fullmoveCounter = 1;
 
     bool whiteToMove = true;
+
+    std::uint64_t hash = 0;
 };
 
 class Board {
@@ -60,6 +62,7 @@ public:
     std::uint8_t getCastlingRights() const { return castlingRights; }
     int getEnPassantSquare() const { return enPassantSquare; }
     char getPieceAt(int square) const { return pieceAt(square); }
+    std::uint64_t getHash() const { return hash; }
 
 
 private:
@@ -74,6 +77,8 @@ private:
     int fullmoveCounter = 1;
     std::uint8_t castlingRights = 0;
     int enPassantSquare = -1;
+
+    std::uint64_t hash = 0;
 
     char pieceAt(int square) const;
     Piece pieceAtSquare(int square) const;

@@ -14,6 +14,7 @@ add_library(chess_engine_core
     src/Move.cpp
     src/Evaluation.cpp
     src/Search.cpp
+    src/Zobrist.cpp
 )
 
 target_include_directories(chess_engine_core PUBLIC

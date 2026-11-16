@@ -4,6 +4,7 @@
 #include "Board.h"
 #include "BitUtils.h"
 #include "Move.h"
+#include "Zobrist.h"
 
 Board::Board(){
     setStartingPosition();
@@ -44,6 +45,8 @@ void Board::setStartingPosition(){
     enPassantSquare = -1;
     halfmoveClock = 0;
     fullmoveCounter = 1;
+
+    hash = Zobrist::compute(*this);
 }
 
 
@@ -122,6 +125,7 @@ void Board::clearBoard(){
     blackPieces = 0;
     occupied = 0;
 
+    hash = Zobrist::compute(*this);
 }
 
 void Board::makeMove(const Move& move, UndoState& undo){
@@ -151,20 +155,28 @@ void Board::makeMove(const Move& move, UndoState& undo){
     undo.halfmoveClock = halfmoveClock;
     undo.fullmoveCounter = fullmoveCounter;
     undo.whiteToMove = whiteToMove;
+    undo.hash = hash;
+
+    hash ^= Zobrist::castlingKey(castlingRights);
+    hash ^= Zobrist::enPassantKey(*this);
 
     if(capturedPiece != PIECE_COUNT){
         BitUtils::popBit(pieces[capturedPiece], capturedSquare);
+        hash ^= Zobrist::pieceKey(capturedPiece, capturedSquare);
     }
 
     BitUtils::popBit(pieces[movingPiece], move.from);
+    hash ^= Zobrist::pieceKey(movingPiece, move.from);
 
     if (move.type == MoveType::Promotion ||
         move.type == MoveType::PromotionCapture){
 
         BitUtils::setBit(pieces[move.promotionPiece], move.to);
+        hash ^= Zobrist::pieceKey(move.promotionPiece, move.to);
 
        } else {
         BitUtils::setBit(pieces[movingPiece], move.to);
+        hash ^= Zobrist::pieceKey(movingPiece, move.to);
        }
 
 
@@ -188,6 +200,7 @@ void Board::makeMove(const Move& move, UndoState& undo){
 
         BitUtils::popBit(pieces[rook], rookFrom);
         BitUtils::setBit(pieces[rook], rookTo);
+        hash ^= Zobrist::pieceKey(rook, rookFrom) ^ Zobrist::pieceKey(rook, rookTo);
     }
 
 
@@ -248,6 +261,10 @@ void Board::makeMove(const Move& move, UndoState& undo){
 
 
     updateOccupancy();
+
+    hash ^= Zobrist::castlingKey(castlingRights);
+    hash ^= Zobrist::enPassantKey(*this);
+    hash ^= Zobrist::sideToMoveKey();
 }
 
 void Board::unmakeMove(const Move& move, const UndoState& undo) {
@@ -302,6 +319,7 @@ void Board::unmakeMove(const Move& move, const UndoState& undo) {
     enPassantSquare = undo.enPassantSquare;
     halfmoveClock = undo.halfmoveClock;
     fullmoveCounter = undo.fullmoveCounter;
+    hash = undo.hash;
 
     updateOccupancy();
 }
@@ -442,4 +460,6 @@ void Board::loadFEN(const std::string& fen){
     enPassantSquare = enPassantTarget;
     halfmoveClock = halfmove;
     fullmoveCounter = fullmove;
+
+    hash = Zobrist::compute(*this);
 }
