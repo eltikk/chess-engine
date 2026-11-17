@@ -67,6 +67,10 @@ int scoreMove(const Board& board, const Move& move) {
     }
 }
 
+bool sameMove(const Move& a, const Move& b) {
+    return a.from == b.from && a.to == b.to && a.promotionPiece == b.promotionPiece;
+}
+
 int quiescence(Board& board, int alpha, int beta, int ply, std::uint64_t* qNodes) {
     if (qNodes != nullptr) {
         ++(*qNodes);
@@ -167,7 +171,7 @@ int quiescence(Board& board, int alpha, int beta, int ply, std::uint64_t* qNodes
 } // namespace
 
 int Search::negamax(Board& board, int depth, int ply, int alpha, int beta, std::uint64_t* nodes,
-                    std::uint64_t* qNodes) {
+                    std::uint64_t* qNodes, TranspositionTable* tt) {
 
     // Leaf nodes are counted in qNodes by quiescence, so check depth before counting here.
     if (depth <= 0) {
@@ -179,6 +183,17 @@ int Search::negamax(Board& board, int depth, int ply, int alpha, int beta, std::
     }
 
     constexpr int mateScore = 100000;
+
+    const int originalAlpha = alpha;
+    Move ttMove{};
+
+    if (tt != nullptr) {
+        int ttScore = 0;
+
+        if (tt->probe(board.getHash(), depth, alpha, beta, ply, ttScore, ttMove)) {
+            return ttScore;
+        }
+    }
 
     MoveList moves;
     MoveGenerator::generateLegalMoves(board, moves);
@@ -194,18 +209,28 @@ int Search::negamax(Board& board, int depth, int ply, int alpha, int beta, std::
         return scoreMove(board, a) > scoreMove(board, b);
     });
 
+    // Search the stored best move first, keeping the MVV-LVA order of the remaining moves
+    for (int i = 0; i < moves.count; ++i) {
+        if (sameMove(moves.moves[i], ttMove)) {
+            std::rotate(moves.moves, moves.moves + i, moves.moves + i + 1);
+            break;
+        }
+    }
+
     int bestScore = std::numeric_limits<int>::min();
+    Move bestMove = moves.moves[0];
 
     for (int i = 0; i < moves.count; ++i) {
         const Move& move = moves.moves[i];
         UndoState undo;
 
         board.makeMove(move, undo);
-        int score = -negamax(board, depth - 1, ply + 1, -beta, -alpha, nodes, qNodes);
+        int score = -negamax(board, depth - 1, ply + 1, -beta, -alpha, nodes, qNodes, tt);
         board.unmakeMove(move, undo);
 
         if (score > bestScore) {
             bestScore = score;
+            bestMove = move;
         }
 
         if (score > alpha) {
@@ -215,6 +240,18 @@ int Search::negamax(Board& board, int depth, int ply, int alpha, int beta, std::
         if (alpha >= beta) {
             break;
         }
+    }
+
+    if (tt != nullptr) {
+        TranspositionTable::Bound bound = TranspositionTable::Bound::Exact;
+
+        if (bestScore <= originalAlpha) {
+            bound = TranspositionTable::Bound::Upper;
+        } else if (bestScore >= beta) {
+            bound = TranspositionTable::Bound::Lower;
+        }
+
+        tt->store(board.getHash(), depth, bestScore, bound, bestMove, ply);
     }
 
     return bestScore;
@@ -242,6 +279,9 @@ std::optional<Move> Search::findBestMove(Board& board, int maxDepth,
     std::optional<Move> bestMove;
 
     std::uint64_t totalNodes = 0;
+
+    // Owned by this search so it persists across iterations without leaking into other searches
+    TranspositionTable tt;
 
     const auto startTime = std::chrono::steady_clock::now();
 
@@ -273,7 +313,7 @@ std::optional<Move> Search::findBestMove(Board& board, int maxDepth,
             UndoState undo;
             board.makeMove(move, undo);
 
-            int score = -negamax(board, depth - 1, 1, -beta, -alpha, &nodes, &qNodes);
+            int score = -negamax(board, depth - 1, 1, -beta, -alpha, &nodes, &qNodes, &tt);
 
             board.unmakeMove(move, undo);
 
@@ -300,7 +340,8 @@ std::optional<Move> Search::findBestMove(Board& board, int maxDepth,
         const std::uint64_t nps = elapsedUs > 0 ? totalNodes * 1000000ULL / elapsedUs : 0;
 
         if (bestMove.has_value() && onIteration) {
-            onIteration(IterationInfo{depth, *bestMove, bestScore, totalNodes, timeMs, nps});
+            onIteration(IterationInfo{depth, *bestMove, bestScore, totalNodes, timeMs, nps,
+                                      tt.getHits(), tt.getCutoffs()});
         }
     }
 

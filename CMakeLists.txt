@@ -15,6 +15,7 @@ add_library(chess_engine_core
     src/Evaluation.cpp
     src/Search.cpp
     src/Zobrist.cpp
+    src/TranspositionTable.cpp
 )
 
 target_include_directories(chess_engine_core PUBLIC

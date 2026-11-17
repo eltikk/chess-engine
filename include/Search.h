@@ -2,6 +2,7 @@
 
 #include "Board.h"
 #include "Move.h"
+#include "TranspositionTable.h"
 #include <cstdint>
 #include <functional>
 #include <optional>
@@ -15,13 +16,15 @@ class Search {
         std::uint64_t nodes;
         std::uint64_t timeMs;
         std::uint64_t nps;
+        std::uint64_t ttHits;
+        std::uint64_t ttCutoffs;
     };
 
     using IterationCallback = std::function<void(const IterationInfo&)>;
 
     static int negamax(Board& board, int depth, int ply = 0, int alpha = -1000000,
                        int beta = 1000000, std::uint64_t* nodes = nullptr,
-                       std::uint64_t* qNodes = nullptr);
+                       std::uint64_t* qNodes = nullptr, TranspositionTable* tt = nullptr);
     static std::optional<Move> findBestMove(Board& board, int maxDepth,
                                             const IterationCallback& onIteration = {});
 };
