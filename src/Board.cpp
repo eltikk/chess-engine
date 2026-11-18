@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <iostream>
 #include <sstream>
 #include <stdexcept>
@@ -125,7 +126,10 @@ void Board::clearBoard(){
     blackPieces = 0;
     occupied = 0;
 
+    history.clear();
+
     hash = Zobrist::compute(*this);
+    enPassantKey = 0;
 }
 
 void Board::makeMove(const Move& move, UndoState& undo){
@@ -156,9 +160,12 @@ void Board::makeMove(const Move& move, UndoState& undo){
     undo.fullmoveCounter = fullmoveCounter;
     undo.whiteToMove = whiteToMove;
     undo.hash = hash;
+    undo.enPassantKey = enPassantKey;
+
+    history.push_back(hash);
 
     hash ^= Zobrist::castlingKey(castlingRights);
-    hash ^= Zobrist::enPassantKey(*this);
+    hash ^= enPassantKey;
 
     if(capturedPiece != PIECE_COUNT){
         BitUtils::popBit(pieces[capturedPiece], capturedSquare);
@@ -262,8 +269,10 @@ void Board::makeMove(const Move& move, UndoState& undo){
 
     updateOccupancy();
 
+    enPassantKey = Zobrist::enPassantKey(*this);
+
     hash ^= Zobrist::castlingKey(castlingRights);
-    hash ^= Zobrist::enPassantKey(*this);
+    hash ^= enPassantKey;
     hash ^= Zobrist::sideToMoveKey();
 }
 
@@ -320,8 +329,59 @@ void Board::unmakeMove(const Move& move, const UndoState& undo) {
     halfmoveClock = undo.halfmoveClock;
     fullmoveCounter = undo.fullmoveCounter;
     hash = undo.hash;
+    enPassantKey = undo.enPassantKey;
+
+    history.pop_back();
 
     updateOccupancy();
+}
+
+int Board::repetitionDistance(int searchPly) const {
+    const int size = static_cast<int>(history.size());
+
+    // Positions before the last capture or pawn move can never recur
+    const int limit = std::min(halfmoveClock, size);
+
+    int occurrences = 0;
+
+    // The same side is to move every second ply, and a position needs at least four plies to recur
+    for(int distance = 4; distance <= limit; distance += 2){
+        if(history[size - distance] != hash){
+            continue;
+        }
+
+        // Search heuristic: one earlier occurrence after the root suffices, since the line could
+        // repeat it again. Occurrences at or before the root need the full threefold count.
+        if(distance < searchPly || ++occurrences >= 2){
+            return distance;
+        }
+    }
+
+    return 0;
+}
+
+bool Board::isInsufficientMaterial() const {
+    const std::uint64_t majorsAndPawns =
+        pieces[WHITE_PAWN] | pieces[BLACK_PAWN] |
+        pieces[WHITE_ROOK] | pieces[BLACK_ROOK] |
+        pieces[WHITE_QUEEN] | pieces[BLACK_QUEEN];
+
+    if(majorsAndPawns){
+        return false;
+    }
+
+    const std::uint64_t knights = pieces[WHITE_KNIGHT] | pieces[BLACK_KNIGHT];
+    const std::uint64_t bishops = pieces[WHITE_BISHOP] | pieces[BLACK_BISHOP];
+
+    // Bare kings, or a single minor piece
+    if(BitUtils::popcount(knights | bishops) <= 1){
+        return true;
+    }
+
+    // Only bishops, all on squares of the same color
+    constexpr std::uint64_t lightSquares = 0x55AA55AA55AA55AAULL;
+
+    return knights == 0 && ((bishops & lightSquares) == 0 || (bishops & ~lightSquares) == 0);
 }
 
 //FEN IMPLEMENTATION
@@ -462,4 +522,5 @@ void Board::loadFEN(const std::string& fen){
     fullmoveCounter = fullmove;
 
     hash = Zobrist::compute(*this);
+    enPassantKey = Zobrist::enPassantKey(*this);
 }

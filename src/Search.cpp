@@ -71,13 +71,40 @@ bool sameMove(const Move& a, const Move& b) {
     return a.from == b.from && a.to == b.to && a.promotionPiece == b.promotionPiece;
 }
 
-int quiescence(Board& board, int alpha, int beta, int ply, std::uint64_t* qNodes) {
+// No repetition draw was relied on
+constexpr int noHistoryPly = std::numeric_limits<int>::max();
+
+// Draws that can be scored before generating moves, since these positions are never checkmate.
+// The root is never scored as a draw so it still gets a best move.
+bool isDrawnPosition(const Board& board, int ply, int* historyPly) {
+    if (ply == 0) {
+        return false;
+    }
+
+    if (const int distance = board.repetitionDistance(ply)) {
+        if (historyPly != nullptr) {
+            *historyPly = std::min(*historyPly, ply - distance);
+        }
+        return true;
+    }
+
+    return board.isInsufficientMaterial();
+}
+
+// Checkmate takes precedence, so this is only tested once the side to move has a legal move
+bool isFiftyMoveDraw(const Board& board, int ply) { return ply > 0 && board.isFiftyMoveRule(); }
+
+int quiescence(Board& board, int alpha, int beta, int ply, std::uint64_t* qNodes, int* historyPly) {
     if (qNodes != nullptr) {
         ++(*qNodes);
     }
 
     constexpr int mateScore = 100000;
     constexpr int maxQuiescencePly = 64;
+
+    if (isDrawnPosition(board, ply, historyPly)) {
+        return 0;
+    }
 
     bool inCheck = MoveGenerator::isKingInCheck(board, board.isWhiteToMove());
 
@@ -88,6 +115,10 @@ int quiescence(Board& board, int alpha, int beta, int ply, std::uint64_t* qNodes
         if (inCheck) {
             return -mateScore + ply;
         }
+        return 0;
+    }
+
+    if (isFiftyMoveDraw(board, ply)) {
         return 0;
     }
 
@@ -152,7 +183,7 @@ int quiescence(Board& board, int alpha, int beta, int ply, std::uint64_t* qNodes
 
         board.makeMove(move, undo);
 
-        int score = -quiescence(board, -beta, -alpha, ply + 1, qNodes);
+        int score = -quiescence(board, -beta, -alpha, ply + 1, qNodes, historyPly);
 
         board.unmakeMove(move, undo);
 
@@ -171,11 +202,11 @@ int quiescence(Board& board, int alpha, int beta, int ply, std::uint64_t* qNodes
 } // namespace
 
 int Search::negamax(Board& board, int depth, int ply, int alpha, int beta, std::uint64_t* nodes,
-                    std::uint64_t* qNodes, TranspositionTable* tt) {
+                    std::uint64_t* qNodes, TranspositionTable* tt, int* historyPly) {
 
     // Leaf nodes are counted in qNodes by quiescence, so check depth before counting here.
     if (depth <= 0) {
-        return quiescence(board, alpha, beta, ply, qNodes);
+        return quiescence(board, alpha, beta, ply, qNodes, historyPly);
     }
 
     if (nodes != nullptr) {
@@ -184,10 +215,20 @@ int Search::negamax(Board& board, int depth, int ply, int alpha, int beta, std::
 
     constexpr int mateScore = 100000;
 
+    // The hash encodes neither the moves that led here nor the halfmove clock. Repetition depends
+    // on those moves, so it is tested before the table probe, together with insufficient material,
+    // which depends only on the position. Subtrees that may reach the fifty-move limit neither read
+    // nor write table scores.
+    if (isDrawnPosition(board, ply, historyPly)) {
+        return 0;
+    }
+
+    const bool useTable = tt != nullptr && board.getHalfmoveClock() + depth < Board::fiftyMoveLimit;
+
     const int originalAlpha = alpha;
     Move ttMove{};
 
-    if (tt != nullptr) {
+    if (useTable) {
         int ttScore = 0;
 
         if (tt->probe(board.getHash(), depth, alpha, beta, ply, ttScore, ttMove)) {
@@ -202,6 +243,10 @@ int Search::negamax(Board& board, int depth, int ply, int alpha, int beta, std::
         if (MoveGenerator::isKingInCheck(board, board.isWhiteToMove())) {
             return -mateScore + ply;
         }
+        return 0;
+    }
+
+    if (isFiftyMoveDraw(board, ply)) {
         return 0;
     }
 
@@ -220,12 +265,16 @@ int Search::negamax(Board& board, int depth, int ply, int alpha, int beta, std::
     int bestScore = std::numeric_limits<int>::min();
     Move bestMove = moves.moves[0];
 
+    // Earliest occurrence relied on by repetition draws below this node
+    int subtreeHistoryPly = noHistoryPly;
+
     for (int i = 0; i < moves.count; ++i) {
         const Move& move = moves.moves[i];
         UndoState undo;
 
         board.makeMove(move, undo);
-        int score = -negamax(board, depth - 1, ply + 1, -beta, -alpha, nodes, qNodes, tt);
+        int score = -negamax(board, depth - 1, ply + 1, -beta, -alpha, nodes, qNodes, tt,
+                             &subtreeHistoryPly);
         board.unmakeMove(move, undo);
 
         if (score > bestScore) {
@@ -242,7 +291,13 @@ int Search::negamax(Board& board, int depth, int ply, int alpha, int beta, std::
         }
     }
 
-    if (tt != nullptr) {
+    if (historyPly != nullptr) {
+        *historyPly = std::min(*historyPly, subtreeHistoryPly);
+    }
+
+    // Store only scores whose repetitions lie entirely below this node; those hold along any path
+    // here. Repeating this position or one above it depends on how it was reached.
+    if (useTable && subtreeHistoryPly > ply) {
         TranspositionTable::Bound bound = TranspositionTable::Bound::Exact;
 
         if (bestScore <= originalAlpha) {
