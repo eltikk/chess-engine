@@ -3,6 +3,8 @@
 #include "Board.h"
 #include "Move.h"
 #include "TranspositionTable.h"
+#include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <optional>
@@ -21,13 +23,42 @@ class Search {
     };
 
     using IterationCallback = std::function<void(const IterationInfo&)>;
+    using Clock = std::chrono::steady_clock;
+
+    static constexpr int maxSearchDepth = 64;
+    static constexpr std::int64_t moveOverheadMs = 30;
+    static constexpr std::uint64_t stopCheckInterval = 2048;
+
+    // No new iteration starts after the soft deadline; the hard deadline interrupts one in progress
+    struct Limits {
+        int depth = maxSearchDepth;
+        Clock::time_point softDeadline = Clock::time_point::max();
+        Clock::time_point hardDeadline = Clock::time_point::max();
+    };
+
+    // Once stopped is set, every search function returns at once and its score must be ignored
+    struct Control {
+        const std::atomic<bool>* stopRequested = nullptr;
+        Clock::time_point hardDeadline = Clock::time_point::max();
+        std::uint64_t checkCounter = 0;
+        bool stopped = false;
+    };
 
     // If given, historyPly is lowered to the ply of the earliest position a repetition draw in this
     // search relied on (negative for positions before the root).
     static int negamax(Board& board, int depth, int ply = 0, int alpha = -1000000,
                        int beta = 1000000, std::uint64_t* nodes = nullptr,
                        std::uint64_t* qNodes = nullptr, TranspositionTable* tt = nullptr,
-                       int* historyPly = nullptr);
+                       int* historyPly = nullptr, Control* control = nullptr);
     static std::optional<Move> findBestMove(Board& board, int maxDepth,
                                             const IterationCallback& onIteration = {});
+    // Returns the best move of the last completed iteration, or a legal fallback move if none
+    // completed. Returns nothing only when there are no legal moves.
+    static std::optional<Move> findBestMove(Board& board, const Limits& limits,
+                                            const std::atomic<bool>* stopRequested,
+                                            const IterationCallback& onIteration = {});
+
+    // Time to spend on one move from the side to move's clock, always at least 1 ms
+    static std::int64_t allocateTimeMs(std::int64_t timeMs, std::int64_t incMs,
+                                       std::int64_t movesToGo);
 };

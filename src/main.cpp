@@ -3,10 +3,134 @@
 #include "MoveList.h"
 #include "Search.h"
 
+#include <algorithm>
+#include <atomic>
+#include <cstdint>
 #include <cstdlib>
 #include <iostream>
+#include <mutex>
+#include <optional>
 #include <sstream>
 #include <string>
+#include <thread>
+
+namespace {
+
+std::mutex outputMutex;
+
+// Both the input loop and the search thread write to stdout, so every line goes through here
+void send(const std::string& line) {
+    std::lock_guard<std::mutex> lock(outputMutex);
+    std::cout << line << '\n' << std::flush;
+}
+
+std::string formatInfo(const Search::IterationInfo& info) {
+    constexpr int mateScore = 100000;
+    constexpr int mateThreshold = mateScore - 1000;
+
+    std::ostringstream output;
+    output << "info depth " << info.depth;
+
+    if (std::abs(info.score) >= mateThreshold) {
+        int pliesToMate = mateScore - std::abs(info.score);
+        int movesToMate = (pliesToMate + 1) / 2;
+
+        if (info.score < 0) {
+            movesToMate = -movesToMate;
+        }
+
+        output << " score mate " << movesToMate;
+    } else {
+        output << " score cp " << info.score;
+    }
+
+    output << " nodes " << info.nodes << " time " << info.timeMs << " nps " << info.nps << " pv "
+           << info.bestMove.toUCI();
+
+    return output.str();
+}
+
+struct GoCommand {
+    Search::Limits limits;
+    bool infinite = false;
+};
+
+// Unknown tokens, such as those of unsupported go parameters, are skipped
+GoCommand parseGo(const std::string& command, bool whiteToMove,
+                  Search::Clock::time_point startTime) {
+    std::istringstream input(command);
+    std::string token;
+
+    input >> token; // Skip "go"
+
+    GoCommand go;
+    std::optional<std::int64_t> depth;
+    std::optional<std::int64_t> moveTimeMs;
+    std::optional<std::int64_t> whiteTimeMs;
+    std::optional<std::int64_t> blackTimeMs;
+    std::int64_t whiteIncMs = 0;
+    std::int64_t blackIncMs = 0;
+    std::int64_t movesToGo = 0;
+
+    while (input >> token) {
+        std::int64_t value = 0;
+
+        if (token == "infinite") {
+            go.infinite = true;
+        } else if (token == "depth" && input >> value) {
+            depth = value;
+        } else if (token == "movetime" && input >> value) {
+            moveTimeMs = value;
+        } else if (token == "wtime" && input >> value) {
+            whiteTimeMs = value;
+        } else if (token == "btime" && input >> value) {
+            blackTimeMs = value;
+        } else if (token == "winc" && input >> value) {
+            whiteIncMs = value;
+        } else if (token == "binc" && input >> value) {
+            blackIncMs = value;
+        } else if (token == "movestogo" && input >> value) {
+            movesToGo = value;
+        }
+    }
+
+    const std::optional<std::int64_t> timeMs = whiteToMove ? whiteTimeMs : blackTimeMs;
+    const std::int64_t incMs = whiteToMove ? whiteIncMs : blackIncMs;
+
+    // Without any limit the search only ends on stop
+    if (!depth.has_value() && !moveTimeMs.has_value() && !timeMs.has_value()) {
+        go.infinite = true;
+    }
+
+    if (depth.has_value()) {
+        go.limits.depth =
+            static_cast<int>(std::clamp<std::int64_t>(*depth, 1, Search::maxSearchDepth));
+    }
+
+    if (go.infinite) {
+        return go;
+    }
+
+    if (moveTimeMs.has_value()) {
+        const auto budget = std::chrono::milliseconds(
+            std::max<std::int64_t>(*moveTimeMs - Search::moveOverheadMs, 1));
+
+        go.limits.softDeadline = startTime + budget;
+        go.limits.hardDeadline = startTime + budget;
+    }
+
+    if (timeMs.has_value()) {
+        const auto budget =
+            std::chrono::milliseconds(Search::allocateTimeMs(*timeMs, incMs, movesToGo));
+
+        go.limits.softDeadline = std::min(go.limits.softDeadline, startTime + budget / 2);
+        go.limits.hardDeadline = std::min(go.limits.hardDeadline, startTime + budget);
+    }
+
+    return go;
+}
+
+} // namespace
 
 int main() {
     MoveGenerator::init();
@@ -14,16 +138,30 @@ int main() {
     Board board;
     std::string command;
 
+    std::thread searchThread;
+    std::atomic<bool> stopRequested = false;
+    std::atomic<bool> quitting = false;
+
+    // Returns once the running search, if any, has finished and sent its bestmove
+    auto stopSearch = [&]() {
+        stopRequested = true;
+        stopRequested.notify_all();
+
+        if (searchThread.joinable()) {
+            searchThread.join();
+        }
+    };
+
     while (std::getline(std::cin, command)) {
 
         if (command == "uci") {
-            std::cout << "id name EltiChess\n";
-            std::cout << "id author Elti\n";
-            std::cout << "uciok\n" << std::flush;
+            send("id name EltiChess");
+            send("id author Elti");
+            send("uciok");
         }
 
         else if (command == "isready") {
-            std::cout << "readyok\n" << std::flush;
+            send("readyok");
         }
 
         else if (command == "ucinewgame") {
@@ -110,57 +248,49 @@ int main() {
             }
         }
 
-        else if (command.rfind("go ", 0) == 0) {
-            std::istringstream input(command);
-            std::string token;
-            int depth;
+        else if (command == "go" || command.rfind("go ", 0) == 0) {
+            const auto startTime = Search::Clock::now();
 
-            input >> token; // Skip "go"
-            input >> token; // Read "depth"
+            // A go sent while searching ends the previous search first
+            stopSearch();
+            stopRequested = false;
 
-            if (token != "depth" || !(input >> depth) || depth <= 0) {
-                std::cerr << "Unsupported go command\n";
-                continue;
-            }
+            const GoCommand go = parseGo(command, board.isWhiteToMove(), startTime);
 
-            auto bestMove =
-                Search::findBestMove(board, depth, [](const Search::IterationInfo& info) {
-                    constexpr int mateScore = 100000;
-                    constexpr int mateThreshold = mateScore - 1000;
+            // The search gets its own board, so later position commands cannot race with it
+            searchThread =
+                std::thread([searchBoard = board, go, &stopRequested, &quitting]() mutable {
+                    auto bestMove = Search::findBestMove(
+                        searchBoard, go.limits, &stopRequested,
+                        [](const Search::IterationInfo& info) { send(formatInfo(info)); });
 
-                    std::cout << "info depth " << info.depth;
-
-                    if (std::abs(info.score) >= mateThreshold) {
-                        int pliesToMate = mateScore - std::abs(info.score);
-                        int movesToMate = (pliesToMate + 1) / 2;
-
-                        if (info.score < 0) {
-                            movesToMate = -movesToMate;
+                    // In infinite mode bestmove is only sent once the GUI asks for it
+                    if (go.infinite) {
+                        while (!stopRequested) {
+                            stopRequested.wait(false);
                         }
-
-                        std::cout << " score mate " << movesToMate;
-                    } else {
-                        std::cout << " score cp " << info.score;
                     }
 
-                    std::cout << " nodes " << info.nodes << " time " << info.timeMs << " nps "
-                              << info.nps << " pv " << info.bestMove.toUCI() << '\n'
-                              << std::flush;
+                    if (quitting) {
+                        return;
+                    }
+
+                    send(bestMove.has_value() ? "bestmove " + bestMove->toUCI() : "bestmove 0000");
                 });
+        }
 
-            if (bestMove.has_value()) {
-                std::cout << "bestmove " << bestMove->toUCI() << '\n';
-            } else {
-                std::cout << "bestmove 0000\n";
-            }
-
-            std::cout << std::flush;
+        else if (command == "stop") {
+            stopSearch();
         }
 
         else if (command == "quit") {
             break;
         }
     }
+
+    // Reached on quit or when input closes; the search is abandoned without a bestmove
+    quitting = true;
+    stopSearch();
 
     return 0;
 }

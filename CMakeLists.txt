@@ -26,7 +26,9 @@ add_executable(chess_engine
     src/main.cpp
 )
 
-target_link_libraries(chess_engine PRIVATE chess_engine_core)
+find_package(Threads REQUIRED)
+
+target_link_libraries(chess_engine PRIVATE chess_engine_core Threads::Threads)
 
 add_executable(chess_perft
     src/perft_main.cpp

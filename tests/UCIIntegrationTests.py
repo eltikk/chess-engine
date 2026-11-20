@@ -1,21 +1,114 @@
+import os
+import queue
 import re
 import subprocess
 import sys
+import threading
+import time
 
 engine = sys.argv[1]
 
+# Allowed overrun of a time limit; slow builds such as sanitizer builds may need more
+TIME_MARGIN = float(os.environ.get("UCI_TIME_MARGIN", "0.5"))
 
+BESTMOVE = re.compile(r"bestmove (?:[a-h][1-8][a-h][1-8][qrbn]?|0000)")
+
+
+class Engine:
+    def __init__(self):
+        self.process = subprocess.Popen(
+            [engine],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+        )
+        self.lines = queue.Queue()
+        self.reader = threading.Thread(target=self._read, daemon=True)
+        self.reader.start()
+
+    def _read(self):
+        for line in self.process.stdout:
+            self.lines.put(line.rstrip("\n"))
+        self.lines.put(None)
+
+    def send(self, command):
+        self.process.stdin.write(command + "\n")
+        self.process.stdin.flush()
+
+    # Returns every line up to and including the first one matching pattern
+    def read_until(self, pattern, timeout=10):
+        deadline = time.monotonic() + timeout
+        output = []
+
+        while True:
+            remaining = deadline - time.monotonic()
+            assert remaining > 0, f"timed out waiting for {pattern!r}, got {output}"
+
+            try:
+                line = self.lines.get(timeout=remaining)
+            except queue.Empty:
+                continue
+
+            assert line is not None, f"engine exited waiting for {pattern!r}, got {output}"
+            output.append(line)
+
+            if re.fullmatch(pattern, line):
+                return output
+
+    # Output that arrives within the given time, without waiting for anything in particular
+    def read_available(self, wait=0.2):
+        time.sleep(wait)
+        output = []
+
+        while not self.lines.empty():
+            line = self.lines.get()
+            if line is not None:
+                output.append(line)
+
+        return output
+
+    def search(self, command, timeout=10):
+        self.send(command)
+        return self.read_until(BESTMOVE.pattern, timeout)
+
+    def quit(self, command="quit", timeout=5):
+        if command is None:
+            self.process.stdin.close()
+        else:
+            self.send(command)
+
+        assert self.process.wait(timeout=timeout) == 0
+        self.reader.join(timeout=timeout)
+
+        output = []
+        while not self.lines.empty():
+            line = self.lines.get()
+            if line is not None:
+                output.append(line)
+
+        return output
+
+
+# Sends the commands one at a time, waiting for each command's reply before the next
 def run_uci(commands):
-    result = subprocess.run(
-        [engine],
-        input="\n".join(commands + ["quit"]) + "\n",
-        text=True,
-        capture_output=True,
-        timeout=30,
-        check=True,
-    )
+    session = Engine()
+    output = []
 
-    return result.stdout.strip().splitlines()
+    for command in commands:
+        if command == "uci":
+            session.send(command)
+            output += session.read_until("uciok")
+        elif command == "isready":
+            session.send(command)
+            output += session.read_until("readyok")
+        elif command.startswith("go"):
+            output += session.search(command)
+        else:
+            session.send(command)
+
+    output += session.quit()
+    return output
 
 
 # Test 1: UCI handshake
@@ -157,5 +250,252 @@ output = run_uci(
 
 assert_search_output(output, 2)
 assert "score cp 0 " in output[-2]
+
+
+
+STARTPOS_MOVES = {
+    "a2a3", "a2a4", "b2b3", "b2b4", "c2c3", "c2c4", "d2d3", "d2d4", "e2e3", "e2e4",
+    "f2f3", "f2f4", "g2g3", "g2g4", "h2h3", "h2h4", "b1a3", "b1c3", "g1f3", "g1h3",
+}
+
+
+def bestmoves(output):
+    return [line for line in output if BESTMOVE.fullmatch(line)]
+
+
+# The final move must be the one reported by the last completed iteration
+def assert_completed_search(output):
+    assert bestmoves(output) == [output[-1]]
+
+    infos = [line for line in output if line.startswith("info ")]
+    if infos:
+        assert output[-1].split()[1] == infos[-1].split(" pv ")[1]
+
+
+def timed_search(session, command):
+    start = time.monotonic()
+    output = session.search(command)
+    return output, time.monotonic() - start
+
+
+# Test 9: Fixed move time
+session = Engine()
+session.send("position startpos")
+output, elapsed = timed_search(session, "go movetime 300")
+
+assert elapsed < 0.3 + TIME_MARGIN
+assert_completed_search(output)
+assert output[-1].split()[1] in STARTPOS_MOVES
+assert session.quit() == []
+
+# Test 10: The clock of the side to move is used
+session = Engine()
+
+session.send("position startpos")
+output, elapsed = timed_search(session, "go wtime 200 btime 100000")
+assert elapsed < TIME_MARGIN
+assert_completed_search(output)
+
+session.send("position startpos moves e2e4")
+output, elapsed = timed_search(session, "go wtime 100000 btime 200")
+assert elapsed < TIME_MARGIN
+assert_completed_search(output)
+
+assert session.quit() == []
+
+# Test 11: Tiny, empty and negative clocks still return a legal move in time
+session = Engine()
+
+for command in [
+    "go wtime 0 btime 0",
+    "go wtime 1 btime 1",
+    "go wtime 30 btime 30 winc 0 binc 0",
+    "go wtime 10 btime 10 winc 5000 binc 5000",
+    "go wtime -100 btime -100",
+    "go movetime 0",
+    "go movetime 1",
+]:
+    session.send("position startpos")
+    output, elapsed = timed_search(session, command)
+
+    assert elapsed < TIME_MARGIN, command
+    assert_completed_search(output)
+    assert output[-1].split()[1] in STARTPOS_MOVES, command
+
+assert session.quit() == []
+
+# Test 12: movestogo spends the whole remaining time on the last move before the time control
+session = Engine()
+session.send("position startpos")
+output, elapsed = timed_search(session, "go wtime 300 btime 300 movestogo 1")
+
+assert elapsed < 0.3 + TIME_MARGIN
+assert_completed_search(output)
+assert session.quit() == []
+
+# Test 13: Depth and time limits combine, whichever is reached first
+output = run_uci(["position startpos", "go depth 2 movetime 10000"])
+assert_search_output(output, 2)
+
+session = Engine()
+session.send("position startpos")
+output, elapsed = timed_search(session, "go depth 64 movetime 200")
+
+assert elapsed < 0.2 + TIME_MARGIN
+assert_completed_search(output)
+assert session.quit() == []
+
+# Unsupported go parameters are ignored
+output = run_uci(["position startpos", "go searchmoves e2e4 nodes 100 depth 1"])
+assert_search_output(output, 1)
+
+# Test 14: isready is answered during an infinite search, which ends only on stop
+session = Engine()
+session.send("position startpos")
+session.send("go infinite")
+time.sleep(0.3)
+
+session.send("isready")
+output = session.read_until("readyok", timeout=1)
+assert bestmoves(output) == []
+
+session.send("stop")
+output += session.read_until(BESTMOVE.pattern, timeout=TIME_MARGIN)
+assert_completed_search(output)
+
+session.send("isready")
+assert session.read_until("readyok") == ["readyok"]
+assert session.quit() == []
+
+# Test 15: An infinite search that reaches its depth limit still waits for stop
+session = Engine()
+session.send("position fen 8/8/4k3/8/8/4K3/8/8 w - - 0 1")
+session.send("go infinite")
+
+output = session.read_available(0.5)
+assert "info depth 64 " in output[-1]
+assert bestmoves(output) == []
+
+session.send("stop")
+output += session.read_until(BESTMOVE.pattern, timeout=1)
+assert_completed_search(output)
+assert session.quit() == []
+
+# Test 16: An infinite search without legal moves also waits for stop
+session = Engine()
+session.send("position startpos moves f2f3 e7e5 g2g4 d8h4")
+session.send("go infinite")
+
+assert session.read_available(0.3) == []
+
+session.send("stop")
+assert session.read_until(BESTMOVE.pattern, timeout=1) == ["bestmove 0000"]
+assert session.quit() == []
+
+# Test 17: Stopping immediately still returns exactly one legal move per search
+session = Engine()
+
+for i in range(25):
+    session.send("position startpos")
+    session.send("go infinite" if i % 2 == 0 else "go")
+    session.send("stop")
+
+    output = session.read_until(BESTMOVE.pattern, timeout=1)
+    assert_completed_search(output)
+    assert output[-1].split()[1] in STARTPOS_MOVES
+
+session.send("isready")
+assert session.read_until("readyok") == ["readyok"]
+assert session.quit() == []
+
+# Test 18: A go during a search stops the previous search first
+session = Engine()
+session.send("position startpos")
+session.send("go infinite")
+time.sleep(0.1)
+session.send("go depth 1")
+
+first = session.read_until(BESTMOVE.pattern, timeout=1)
+second = session.read_until(BESTMOVE.pattern, timeout=1)
+
+assert_completed_search(first)
+assert_search_output(second, 1)
+
+session.send("isready")
+assert session.read_until("readyok") == ["readyok"]
+assert session.quit() == []
+
+# Test 19: stop without a search does nothing
+session = Engine()
+session.send("stop")
+session.send("stop")
+session.send("isready")
+
+assert session.read_until("readyok") == ["readyok"]
+assert session.quit() == []
+
+# Test 20: A search uses the position it was started with
+session = Engine()
+session.send("position startpos")
+session.send("go infinite")
+session.send("position fen 4k3/8/8/8/4q3/8/4R3/4K3 w - - 0 1")
+time.sleep(0.1)
+session.send("stop")
+
+output = session.read_until(BESTMOVE.pattern, timeout=1)
+assert output[-1].split()[1] in STARTPOS_MOVES
+
+assert session.search("go depth 3")[-1] == "bestmove e2e4"
+assert session.quit() == []
+
+# Test 21: A mate in one is found with little time
+session = Engine()
+session.send("position fen 7k/8/5KQ1/8/8/8/8/8 w - - 0 1")
+output, elapsed = timed_search(session, "go movetime 200")
+
+assert elapsed < 0.2 + TIME_MARGIN
+assert output[-1] == "bestmove g6g7"
+assert session.quit() == []
+
+# Test 22: quit or closed input during a search exits promptly without a bestmove
+for command in ["quit", None]:
+    for go in ["go infinite", "go movetime 10000", "go depth 64"]:
+        session = Engine()
+        session.send("position startpos")
+        session.send(go)
+        time.sleep(0.1)
+
+        start = time.monotonic()
+        output = session.quit(command)
+
+        assert time.monotonic() - start < TIME_MARGIN, (command, go)
+        assert bestmoves(output) == [], (command, go)
+
+# Test 23: A go without limits is an infinite search, even once it reaches the maximum depth
+session = Engine()
+session.send("position fen 8/8/4k3/8/8/4K3/8/8 w - - 0 1")
+session.send("go")
+
+output = session.read_available(0.5)
+assert "info depth 64 " in output[-1]
+assert bestmoves(output) == []
+
+session.send("stop")
+output += session.read_until(BESTMOVE.pattern, timeout=1)
+assert_completed_search(output)
+
+session.send("position startpos moves f2f3 e7e5 g2g4 d8h4")
+session.send("go")
+assert session.read_available(0.3) == []
+
+session.send("stop")
+assert session.read_until(BESTMOVE.pattern, timeout=1) == ["bestmove 0000"]
+
+# An explicit depth limit still ends the search without stop
+session.send("position fen 8/8/4k3/8/8/4K3/8/8 w - - 0 1")
+output = session.search("go depth 64", timeout=1)
+assert_search_output(output, 64)
+
+assert session.quit() == []
 
 print("All UCI integration tests passed!")

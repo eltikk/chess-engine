@@ -94,7 +94,41 @@ bool isDrawnPosition(const Board& board, int ply, int* historyPly) {
 // Checkmate takes precedence, so this is only tested once the side to move has a legal move
 bool isFiftyMoveDraw(const Board& board, int ply) { return ply > 0 && board.isFiftyMoveRule(); }
 
-int quiescence(Board& board, int alpha, int beta, int ply, std::uint64_t* qNodes, int* historyPly) {
+bool checkStop(Search::Control& control) {
+    if (!control.stopped) {
+        control.stopped = (control.stopRequested != nullptr &&
+                           control.stopRequested->load(std::memory_order_relaxed)) ||
+                          Search::Clock::now() >= control.hardDeadline;
+    }
+
+    return control.stopped;
+}
+
+// Called at every node; the flag and clock are only read once per stopCheckInterval nodes
+bool shouldStop(Search::Control* control) {
+    if (control == nullptr) {
+        return false;
+    }
+
+    if (control->stopped) {
+        return true;
+    }
+
+    if (++control->checkCounter % Search::stopCheckInterval != 0) {
+        return false;
+    }
+
+    return checkStop(*control);
+}
+
+bool wasStopped(const Search::Control* control) { return control != nullptr && control->stopped; }
+
+int quiescence(Board& board, int alpha, int beta, int ply, std::uint64_t* qNodes, int* historyPly,
+               Search::Control* control) {
+    if (shouldStop(control)) {
+        return 0;
+    }
+
     if (qNodes != nullptr) {
         ++(*qNodes);
     }
@@ -183,9 +217,13 @@ int quiescence(Board& board, int alpha, int beta, int ply, std::uint64_t* qNodes
 
         board.makeMove(move, undo);
 
-        int score = -quiescence(board, -beta, -alpha, ply + 1, qNodes, historyPly);
+        int score = -quiescence(board, -beta, -alpha, ply + 1, qNodes, historyPly, control);
 
         board.unmakeMove(move, undo);
+
+        if (wasStopped(control)) {
+            return 0;
+        }
 
         if (score >= beta) {
             return score;
@@ -202,11 +240,16 @@ int quiescence(Board& board, int alpha, int beta, int ply, std::uint64_t* qNodes
 } // namespace
 
 int Search::negamax(Board& board, int depth, int ply, int alpha, int beta, std::uint64_t* nodes,
-                    std::uint64_t* qNodes, TranspositionTable* tt, int* historyPly) {
+                    std::uint64_t* qNodes, TranspositionTable* tt, int* historyPly,
+                    Control* control) {
 
     // Leaf nodes are counted in qNodes by quiescence, so check depth before counting here.
     if (depth <= 0) {
-        return quiescence(board, alpha, beta, ply, qNodes, historyPly);
+        return quiescence(board, alpha, beta, ply, qNodes, historyPly, control);
+    }
+
+    if (shouldStop(control)) {
+        return 0;
     }
 
     if (nodes != nullptr) {
@@ -274,8 +317,12 @@ int Search::negamax(Board& board, int depth, int ply, int alpha, int beta, std::
 
         board.makeMove(move, undo);
         int score = -negamax(board, depth - 1, ply + 1, -beta, -alpha, nodes, qNodes, tt,
-                             &subtreeHistoryPly);
+                             &subtreeHistoryPly, control);
         board.unmakeMove(move, undo);
+
+        if (wasStopped(control)) {
+            return 0;
+        }
 
         if (score > bestScore) {
             bestScore = score;
@@ -318,6 +365,15 @@ std::optional<Move> Search::findBestMove(Board& board, int maxDepth,
         return std::nullopt;
     }
 
+    Limits limits;
+    limits.depth = maxDepth;
+
+    return findBestMove(board, limits, nullptr, onIteration);
+}
+
+std::optional<Move> Search::findBestMove(Board& board, const Limits& limits,
+                                         const std::atomic<bool>* stopRequested,
+                                         const IterationCallback& onIteration) {
     MoveList moves;
     MoveGenerator::generateLegalMoves(board, moves);
 
@@ -331,6 +387,10 @@ std::optional<Move> Search::findBestMove(Board& board, int maxDepth,
 
     constexpr int infinity = 1000000;
 
+    // Played if the search is stopped before its first iteration completes
+    const Move fallbackMove = moves.moves[0];
+
+    // Best move of the last completed iteration
     std::optional<Move> bestMove;
 
     std::uint64_t totalNodes = 0;
@@ -338,10 +398,22 @@ std::optional<Move> Search::findBestMove(Board& board, int maxDepth,
     // Owned by this search so it persists across iterations without leaking into other searches
     TranspositionTable tt;
 
-    const auto startTime = std::chrono::steady_clock::now();
+    Control control;
+    control.stopRequested = stopRequested;
+    control.hardDeadline = limits.hardDeadline;
+
+    const auto startTime = Clock::now();
 
     // Iterative deepening
-    for (int depth = 1; depth <= maxDepth; ++depth) {
+    for (int depth = 1; depth <= limits.depth; ++depth) {
+        if (checkStop(control)) {
+            break;
+        }
+
+        // The next iteration would most likely be interrupted, so it is not started
+        if (depth > 1 && Clock::now() >= limits.softDeadline) {
+            break;
+        }
 
         std::uint64_t nodes = 1; // Count the root
         std::uint64_t qNodes = 0;
@@ -363,14 +435,23 @@ std::optional<Move> Search::findBestMove(Board& board, int maxDepth,
         std::optional<Move> iterationBestMove;
 
         for (int i = 0; i < moves.count; ++i) {
+            if (checkStop(control)) {
+                break;
+            }
+
             const Move& move = moves.moves[i];
 
             UndoState undo;
             board.makeMove(move, undo);
 
-            int score = -negamax(board, depth - 1, 1, -beta, -alpha, &nodes, &qNodes, &tt);
+            int score = -negamax(board, depth - 1, 1, -beta, -alpha, &nodes, &qNodes, &tt, nullptr,
+                                 &control);
 
             board.unmakeMove(move, undo);
+
+            if (control.stopped) {
+                break;
+            }
 
             if (score > bestScore) {
                 bestScore = score;
@@ -382,13 +463,17 @@ std::optional<Move> Search::findBestMove(Board& board, int maxDepth,
             }
         }
 
+        // An interrupted iteration may not have searched its best move, so it is discarded
+        if (control.stopped) {
+            break;
+        }
+
         bestMove = iterationBestMove;
 
         totalNodes += nodes + qNodes;
 
-        const auto elapsedUs = std::chrono::duration_cast<std::chrono::microseconds>(
-                                   std::chrono::steady_clock::now() - startTime)
-                                   .count();
+        const auto elapsedUs =
+            std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - startTime).count();
 
         const std::uint64_t timeMs = elapsedUs / 1000;
 
@@ -400,5 +485,22 @@ std::optional<Move> Search::findBestMove(Board& board, int maxDepth,
         }
     }
 
-    return bestMove;
+    return bestMove.value_or(fallbackMove);
+}
+
+std::int64_t Search::allocateTimeMs(std::int64_t timeMs, std::int64_t incMs,
+                                    std::int64_t movesToGo) {
+    constexpr int defaultMovesToGo = 30;
+
+    timeMs = std::max<std::int64_t>(timeMs, 0);
+    incMs = std::max<std::int64_t>(incMs, 0);
+
+    if (movesToGo <= 0) {
+        movesToGo = defaultMovesToGo;
+    }
+
+    const std::int64_t target = timeMs / movesToGo + incMs * 3 / 4;
+    const std::int64_t available = timeMs - moveOverheadMs;
+
+    return std::max<std::int64_t>(std::min(target, available), 1);
 }
