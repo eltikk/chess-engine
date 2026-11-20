@@ -1,5 +1,7 @@
 #include <algorithm>
+#include <charconv>
 #include <iostream>
+#include <iterator>
 #include <sstream>
 #include <stdexcept>
 #include "Board.h"
@@ -15,24 +17,20 @@ void Board::setStartingPosition(){
 
     clearBoard();
 
-    //White pawns
     for(int square = 8; square <= 15; square++){
         pieces[WHITE_PAWN] |= 1ULL << square;
     }
 
-    //White pieces
     pieces[WHITE_ROOK] |= (1ULL << 0) | (1ULL << 7);
     pieces[WHITE_KNIGHT] |= (1ULL << 1) | (1ULL << 6);
     pieces[WHITE_BISHOP] |= (1ULL << 2) | (1ULL << 5);
     pieces[WHITE_QUEEN] |= 1ULL<< 3;
     pieces[WHITE_KING] |= 1ULL << 4;
 
-    //Black pawns
     for(int square = 48; square <=55; square++){
         pieces[BLACK_PAWN] |= 1ULL << square;
     }
 
-    //Black pieces
     pieces[BLACK_ROOK] |= (1ULL << 56) | (1ULL<< 63);
     pieces[BLACK_KNIGHT] |= (1ULL << 57) | (1ULL<< 62);
     pieces[BLACK_BISHOP] |= (1ULL << 58) | (1ULL<< 61);
@@ -384,7 +382,23 @@ bool Board::isInsufficientMaterial() const {
     return knights == 0 && ((bishops & lightSquares) == 0 || (bishops & ~lightSquares) == 0);
 }
 
-//FEN IMPLEMENTATION
+namespace {
+
+//Accepts only plain decimal digits, so signs, trailing characters and overflow are rejected
+bool parseFENCounter(const std::string& field, int& value){
+    int parsed = 0;
+    const char* end = field.data() + field.size();
+    const auto [ptr, ec] = std::from_chars(field.data(), end, parsed);
+
+    if(ec != std::errc() || ptr != end || parsed < 0){
+        return false;
+    }
+
+    value = parsed;
+    return true;
+}
+
+} // namespace
 
 void Board::loadFEN(const std::string& fen){
     std::istringstream iss(fen);
@@ -393,6 +407,120 @@ void Board::loadFEN(const std::string& fen){
     //The first four fields are required
     if(!(iss >> placement >> side >> castling >> enPassant)){
         throw std::invalid_argument("FEN must contain at least four fields: " + fen);
+    }
+
+    //Every field is validated before the board is modified, so a rejected FEN leaves it unchanged
+
+    //Piece placement: eight ranks from the eighth down, each describing exactly eight squares
+    std::uint64_t placedPieces[PIECE_COUNT]{};
+    int rank = 7;
+    int file = 0;
+    bool previousWasDigit = false;
+
+    for(char c : placement){
+        if(c == '/'){
+            if(file != 8){
+                throw std::invalid_argument("FEN rank must contain exactly eight squares: " + fen);
+            }
+            if(rank == 0){
+                throw std::invalid_argument("FEN must contain exactly eight ranks: " + fen);
+            }
+            rank--;
+            file = 0;
+            previousWasDigit = false;
+            continue;
+        }
+
+        if(c >= '0' && c <= '9'){
+            //Adjacent digits would describe one run of empty squares in two parts
+            if(c == '0' || c == '9' || previousWasDigit){
+                throw std::invalid_argument("Invalid rank digit in FEN: " + fen);
+            }
+            file += c - '0';
+            if(file > 8){
+                throw std::invalid_argument("FEN rank must contain exactly eight squares: " + fen);
+            }
+            previousWasDigit = true;
+            continue;
+        }
+
+        if(file >= 8){
+            throw std::invalid_argument("FEN rank must contain exactly eight squares: " + fen);
+        }
+
+        const int square = rank * 8 + file;
+
+        switch(c){
+            case 'P':
+                placedPieces[WHITE_PAWN] |= 1ULL << square;
+                break;
+
+            case 'N':
+                placedPieces[WHITE_KNIGHT] |= 1ULL << square;
+                break;
+
+            case 'B':
+                placedPieces[WHITE_BISHOP] |= 1ULL << square;
+                break;
+
+            case 'R':
+                placedPieces[WHITE_ROOK] |= 1ULL << square;
+                break;
+
+            case 'Q':
+                placedPieces[WHITE_QUEEN] |= 1ULL << square;
+                break;
+
+            case 'K':
+                placedPieces[WHITE_KING] |= 1ULL << square;
+                break;
+
+            case 'p':
+                placedPieces[BLACK_PAWN] |= 1ULL << square;
+                break;
+
+            case 'n':
+                placedPieces[BLACK_KNIGHT] |= 1ULL << square;
+                break;
+
+            case 'b':
+                placedPieces[BLACK_BISHOP] |= 1ULL << square;
+                break;
+
+            case 'r':
+                placedPieces[BLACK_ROOK] |= 1ULL << square;
+                break;
+
+            case 'q':
+                placedPieces[BLACK_QUEEN] |= 1ULL << square;
+                break;
+
+            case 'k':
+                placedPieces[BLACK_KING] |= 1ULL << square;
+                break;
+
+            default:
+                throw std::invalid_argument("Invalid piece character in FEN: " + fen);
+        }
+        file++;
+        previousWasDigit = false;
+    }
+
+    if(file != 8){
+        throw std::invalid_argument("FEN rank must contain exactly eight squares: " + fen);
+    }
+    if(rank != 0){
+        throw std::invalid_argument("FEN must contain exactly eight ranks: " + fen);
+    }
+
+    if(BitUtils::popcount(placedPieces[WHITE_KING]) != 1 ||
+       BitUtils::popcount(placedPieces[BLACK_KING]) != 1){
+        throw std::invalid_argument("FEN must contain exactly one king of each color: " + fen);
+    }
+
+    //Side to move
+    if(side != "w" && side != "b"){
+        throw std::invalid_argument("Invalid side to move in FEN: " + fen);
     }
 
     //En passant target square: '-' or a square on rank 6 (white to move) / rank 3 (black to move)
@@ -408,92 +536,30 @@ void Board::loadFEN(const std::string& fen){
         enPassantTarget = (enPassant[1] - '1') * 8 + (enPassant[0] - 'a');
     }
 
-    //Halfmove clock and fullmove counter are optional
+    //Halfmove clock and fullmove counter are optional, but must be non-negative integers if present
     int halfmove = 0;
     int fullmove = 1;
-    int value = 0;
+    std::string counter;
 
-    if(iss >> value) halfmove = value;
-    if(iss >> value) fullmove = value;
+    if(iss >> counter && !parseFENCounter(counter, halfmove)){
+        throw std::invalid_argument("Invalid halfmove clock in FEN: " + fen);
+    }
+    if(iss >> counter && !parseFENCounter(counter, fullmove)){
+        throw std::invalid_argument("Invalid fullmove counter in FEN: " + fen);
+    }
+    if(iss >> counter){
+        throw std::invalid_argument("FEN must contain at most six fields: " + fen);
+    }
 
     clearBoard();
 
-    //Piece placement
-    int rank = 7;
-    int file = 0;
-
-    for(char c : placement){
-        if(c == '/'){
-            rank--;
-            file = 0;
-            continue;
-        }
-        if(c>= '1' && c<='8'){
-            file += c -'0';
-            continue;
-        }
-
-        const int square = rank * 8 + file;
-
-        switch(c){
-            case 'P':
-                pieces[WHITE_PAWN] |= 1ULL << square;
-                break;
-
-            case 'N':
-                pieces[WHITE_KNIGHT] |= 1ULL << square;
-                break;
-
-            case 'B':
-                pieces[WHITE_BISHOP] |= 1ULL << square;
-                break;
-
-            case 'R':
-                pieces[WHITE_ROOK] |= 1ULL << square;
-                break;
-
-            case 'Q':
-                pieces[WHITE_QUEEN] |= 1ULL << square;
-                break;
-
-            case 'K':
-                pieces[WHITE_KING] |= 1ULL << square;
-                break;
-
-            case 'p':
-                pieces[BLACK_PAWN] |= 1ULL << square;
-                break;
-
-            case 'n':
-                pieces[BLACK_KNIGHT] |= 1ULL << square;
-                break;
-
-            case 'b':
-                pieces[BLACK_BISHOP] |= 1ULL << square;
-                break;
-
-            case 'r':
-                pieces[BLACK_ROOK] |= 1ULL << square;
-                break;
-
-            case 'q':
-                pieces[BLACK_QUEEN] |= 1ULL << square;
-                break;
-
-            case 'k':
-                pieces[BLACK_KING] |= 1ULL << square;
-                break;
-        }
-        file++;
-    }
+    std::copy(std::begin(placedPieces), std::end(placedPieces), std::begin(pieces));
     updateOccupancy();
 
-
-    //Side to move
     whiteToMove = (side == "w");
 
 
-    //Castling ability test
+    //Castling rights
     castlingRights = 0;
 
     for(char c : castling){

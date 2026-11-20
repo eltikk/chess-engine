@@ -21,8 +21,7 @@ TEST_CASE("White pawn attack table handles file edges") {
 TEST_CASE("Bishop move generation respects blockers") {
     Board board;
 
-    // Use whatever FEN-loading function you already use in BoardTests
-    board.loadFEN("8/8/1p3p2/8/3B4/2P5/8/8 w - - 0 1");
+    board.loadFEN("4k3/8/1p3p2/8/3B4/2P5/8/4K3 w - - 0 1");
 
     MoveList moves;
 
@@ -34,7 +33,7 @@ TEST_CASE("Bishop move generation respects blockers") {
 
 TEST_CASE("Rook move generation respects blockers") {
     Board board;
-    board.loadFEN("8/8/3p4/8/3R1p2/8/3P4/8 w - - 0 1");
+    board.loadFEN("4k3/8/3p4/8/3R1p2/8/3P4/4K3 w - - 0 1");
 
     MoveList moves;
 
@@ -46,7 +45,7 @@ TEST_CASE("Rook move generation respects blockers") {
 
 TEST_CASE("Queen move generation respects blockers") {
     Board board;
-    board.loadFEN("8/8/3p1p2/8/3Q4/2P5/3P4/8 w - - 0 1");
+    board.loadFEN("4k3/8/3p1p2/8/3Q4/2P5/3P4/4K3 w - - 0 1");
 
     MoveList moves;
 
@@ -58,7 +57,7 @@ TEST_CASE("Queen move generation respects blockers") {
 
 TEST_CASE("White pawn attacks square") {
     Board board;
-    board.loadFEN("8/8/8/8/8/2P5/8/8 w - - 0 1"); // white pawn c3
+    board.loadFEN("8/7k/8/8/8/2P5/8/7K w - - 0 1"); // white pawn c3
 
     EXPECT_TRUE(
         MoveGenerator::isSquareAttacked(board, 27, true) // d4
@@ -67,7 +66,7 @@ TEST_CASE("White pawn attacks square") {
 
 TEST_CASE("Knight attacks square") {
     Board board;
-    board.loadFEN("8/8/8/5N2/8/8/8/8 w - - 0 1"); // knight f5
+    board.loadFEN("8/7k/8/5N2/8/8/8/7K w - - 0 1"); // knight f5
 
     EXPECT_TRUE(
         MoveGenerator::isSquareAttacked(board, 27, true)
@@ -76,7 +75,7 @@ TEST_CASE("Knight attacks square") {
 
 TEST_CASE("Bishop attacks square") {
     Board board;
-    board.loadFEN("8/8/8/8/8/8/1B6/8 w - - 0 1"); // bishop b2
+    board.loadFEN("8/7k/8/8/8/8/1B6/7K w - - 0 1"); // bishop b2
 
     EXPECT_TRUE(
         MoveGenerator::isSquareAttacked(board, 27, true)
@@ -85,7 +84,7 @@ TEST_CASE("Bishop attacks square") {
 
 TEST_CASE("Rook attacks square") {
     Board board;
-    board.loadFEN("3R4/8/8/8/8/8/8/8 w - - 0 1"); // rook d8
+    board.loadFEN("3R4/7k/8/8/8/8/8/7K w - - 0 1"); // rook d8
 
     EXPECT_TRUE(
         MoveGenerator::isSquareAttacked(board, 27, true)
@@ -94,7 +93,7 @@ TEST_CASE("Rook attacks square") {
 
 TEST_CASE("Queen attacks square") {
     Board board;
-    board.loadFEN("8/8/8/8/Q7/8/8/8 w - - 0 1"); // queen a4
+    board.loadFEN("8/7k/8/8/Q7/8/8/7K w - - 0 1"); // queen a4
 
     EXPECT_TRUE(
         MoveGenerator::isSquareAttacked(board, 27, true)
@@ -103,7 +102,7 @@ TEST_CASE("Queen attacks square") {
 
 TEST_CASE("King attacks square") {
     Board board;
-    board.loadFEN("8/8/8/8/8/2K5/8/8 w - - 0 1"); // king c3
+    board.loadFEN("8/7k/8/8/8/2K5/8/8 w - - 0 1"); // king c3
 
     EXPECT_TRUE(
         MoveGenerator::isSquareAttacked(board, 27, true)
@@ -112,7 +111,7 @@ TEST_CASE("King attacks square") {
 
 TEST_CASE("Square is not attacked") {
     Board board;
-    board.loadFEN("8/8/8/8/8/8/8/8 w - - 0 1");
+    board.loadFEN("8/7k/8/8/8/8/8/7K w - - 0 1");
 
     EXPECT_FALSE(
         MoveGenerator::isSquareAttacked(board, 27, true)
@@ -121,7 +120,7 @@ TEST_CASE("Square is not attacked") {
 
 TEST_CASE("White king is in check") {
     Board board;
-    board.loadFEN("4r3/8/8/8/8/8/8/4K3 w - - 0 1");
+    board.loadFEN("4r2k/8/8/8/8/8/8/4K3 w - - 0 1");
 
     EXPECT_TRUE(
         MoveGenerator::isKingInCheck(board, true)
@@ -130,7 +129,7 @@ TEST_CASE("White king is in check") {
 
 TEST_CASE("White king is not in check") {
     Board board;
-    board.loadFEN("8/8/8/8/8/8/8/4K3 w - - 0 1");
+    board.loadFEN("7k/8/8/8/8/8/8/4K3 w - - 0 1");
 
     EXPECT_FALSE(
         MoveGenerator::isKingInCheck(board, true)

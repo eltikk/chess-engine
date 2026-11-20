@@ -130,6 +130,75 @@ GoCommand parseGo(const std::string& command, bool whiteToMove,
     return go;
 }
 
+// Builds the position on a separate board, so a rejected command leaves the current one untouched
+std::optional<Board> parsePosition(const std::string& command) {
+    std::istringstream input(command);
+    std::string token;
+
+    input >> token; // Skip "position"
+    input >> token; // Read "startpos" or "fen"
+
+    Board position;
+
+    if (token == "startpos") {
+        if (input >> token && token != "moves") {
+            std::cerr << "Expected 'moves' keyword\n";
+            return std::nullopt;
+        }
+    }
+
+    else if (token == "fen") {
+        // The FEN runs up to the optional moves keyword; loadFEN validates its four to six fields
+        std::string fen;
+
+        while (input >> token && token != "moves") {
+            if (!fen.empty()) {
+                fen += " ";
+            }
+
+            fen += token;
+        }
+
+        try {
+            position.loadFEN(fen);
+        } catch (const std::exception& e) {
+            std::cerr << "Invalid FEN: " << e.what() << '\n';
+            return std::nullopt;
+        }
+    }
+
+    else {
+        std::cerr << "Unsupported position format\n";
+        return std::nullopt;
+    }
+
+    while (input >> token) {
+        MoveList legalMoves;
+        MoveGenerator::generateLegalMoves(position, legalMoves);
+
+        bool found = false;
+
+        for (int i = 0; i < legalMoves.count; ++i) {
+            const Move& move = legalMoves.moves[i];
+
+            if (move.toUCI() == token) {
+                UndoState undo;
+                position.makeMove(move, undo);
+
+                found = true;
+                break;
+            }
+        }
+
+        if (!found) {
+            std::cerr << "Invalid move: " << token << '\n';
+            return std::nullopt;
+        }
+    }
+
+    return position;
+}
+
 } // namespace
 
 int main() {
@@ -169,82 +238,8 @@ int main() {
         }
 
         else if (command.rfind("position ", 0) == 0) {
-            std::istringstream input(command);
-            std::string token;
-
-            input >> token; // Skip "position"
-            input >> token; // Read "startpos" or "fen"
-
-            if (token == "startpos") {
-                board.setStartingPosition();
-            }
-
-            else if (token == "fen") {
-                std::string fen;
-                std::string field;
-
-                for (int i = 0; i < 6; ++i) {
-                    if (!(input >> field)) {
-                        fen.clear();
-                        break;
-                    }
-
-                    if (i > 0) {
-                        fen += " ";
-                    }
-
-                    fen += field;
-                }
-
-                if (fen.empty()) {
-                    std::cerr << "Invalid FEN command\n";
-                    continue;
-                }
-
-                try {
-                    board.loadFEN(fen);
-                } catch (const std::exception& e) {
-                    std::cerr << "Invalid FEN: " << e.what() << '\n';
-                    continue;
-                }
-            }
-
-            else {
-                std::cerr << "Unsupported position format\n";
-                continue;
-            }
-
-            if (!(input >> token)) {
-                continue;
-            }
-
-            if (token != "moves") {
-                std::cerr << "Expected 'moves' keyword\n";
-                continue;
-            }
-
-            while (input >> token) {
-                MoveList legalMoves;
-                MoveGenerator::generateLegalMoves(board, legalMoves);
-
-                bool found = false;
-
-                for (int i = 0; i < legalMoves.count; ++i) {
-                    const Move& move = legalMoves.moves[i];
-
-                    if (move.toUCI() == token) {
-                        UndoState undo;
-                        board.makeMove(move, undo);
-
-                        found = true;
-                        break;
-                    }
-                }
-
-                if (!found) {
-                    std::cerr << "Invalid move: " << token << '\n';
-                    break;
-                }
+            if (std::optional<Board> position = parsePosition(command)) {
+                board = *position;
             }
         }
 

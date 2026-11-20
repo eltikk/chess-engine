@@ -21,7 +21,7 @@ enum Piece : std::uint8_t{
     PIECE_COUNT
 };
 
-struct Move; // Forward declaration
+struct Move;
 
 struct UndoState{
     Piece movedPiece = PIECE_COUNT;
@@ -62,7 +62,6 @@ public:
     bool isFiftyMoveRule() const { return halfmoveClock >= fiftyMoveLimit; }
     bool isInsufficientMaterial() const;
 
-    //Debug getters
     std::uint64_t getPieceBitboard(Piece p) const { return pieces[p]; }
     std::uint64_t getWhitePieces() const { return whitePieces; }
     std::uint64_t getBlackPieces() const { return blackPieces; }

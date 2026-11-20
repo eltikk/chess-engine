@@ -30,24 +30,20 @@ const ZobristKeys& getKeys() {
 
         std::uint64_t seed = 0x123456789ABCDEF0ULL;
 
-        // Generate piece-square keys
         for (auto& piece : result.pieces) {
             for (auto& key : piece) {
                 key = splitmix64(seed);
             }
         }
 
-        // Generate castling keys
         for (auto& key : result.castling) {
             key = splitmix64(seed);
         }
 
-        // Generate en passant keys
         for (auto& key : result.enPassant) {
             key = splitmix64(seed);
         }
 
-        // Generate side-to-move key
         result.sideToMove = splitmix64(seed);
 
         return result;
@@ -138,7 +134,6 @@ std::uint64_t Zobrist::compute(const Board& board) {
     const auto& keys = getKeys();
     std::uint64_t hash = 0;
 
-    // Hash every piece on the board
     for (int p = 0; p < PIECE_COUNT; ++p) {
         std::uint64_t bitboard = board.getPieceBitboard(static_cast<Piece>(p));
 
@@ -151,13 +146,10 @@ std::uint64_t Zobrist::compute(const Board& board) {
         }
     }
 
-    // Castling rights
     hash ^= keys.castling[board.getCastlingRights()];
 
-    // En passant
     hash ^= enPassantKey(board);
 
-    // Side to move
     if (!board.isWhiteToMove()) {
         hash ^= keys.sideToMove;
     }

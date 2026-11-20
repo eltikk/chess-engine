@@ -113,6 +113,7 @@ namespace
 }
 
 
+// The last square of each ray is left out of the mask: a blocker there hides nothing behind it
 std::uint64_t MagicBitboards::maskRookAttacks(int square)
 {
     std::uint64_t attacks = 0ULL;
@@ -283,6 +284,9 @@ void MagicBitboards::init()
 }
 
 
+// Multiplying the masked blockers by the square's magic gathers them into the top bits, and the
+// shift keeps relevantBits of them as the table index. The magics are chosen so that blocker sets
+// with different attacks never share an index.
 std::uint64_t MagicBitboards::getRookAttacks(int square, std::uint64_t occupied)
 {
     std::uint64_t relevantOccupancy = occupied & rookMasks[square];

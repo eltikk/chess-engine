@@ -15,11 +15,13 @@ BESTMOVE = re.compile(r"bestmove (?:[a-h][1-8][a-h][1-8][qrbn]?|0000)")
 
 
 class Engine:
-    def __init__(self):
+    # stderr can be silenced for tests that send deliberately invalid commands
+    def __init__(self, stderr=None):
         self.process = subprocess.Popen(
             [engine],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
+            stderr=stderr,
             text=True,
             bufsize=1,
         )
@@ -495,6 +497,71 @@ assert session.read_until(BESTMOVE.pattern, timeout=1) == ["bestmove 0000"]
 session.send("position fen 8/8/4k3/8/8/4K3/8/8 w - - 0 1")
 output = session.search("go depth 64", timeout=1)
 assert_search_output(output, 64)
+
+assert session.quit() == []
+
+# Test 24: FENs with four, five or six fields, with and without moves
+FREE_QUEEN = "4k3/8/8/8/4q3/8/4R3/4K3 w - -"
+
+for fen in [FREE_QUEEN, FREE_QUEEN + " 0", FREE_QUEEN + " 0 1"]:
+    # An empty move list after the keyword is allowed
+    for command in [f"position fen {fen}", f"position fen {fen} moves"]:
+        output = run_uci([command, "go depth 3"])
+        assert_search_output(output, 3)
+        assert output[-1] == "bestmove e2e4", command
+
+    # After Rxe4 black is to move, so the best move must be a move of the black king
+    output = run_uci([f"position fen {fen} moves e2e4", "go depth 3"])
+    assert_search_output(output, 3)
+    assert re.fullmatch(r"bestmove e8[a-h][1-8]", output[-1]), (fen, output[-1])
+
+# A four-field FEN with a whole game history: g1h1 repeats a position for the third time
+output = run_uci(
+    [
+        "position fen 4k3/8/8/8/8/8/q7/7K w - - moves "
+        "h1g1 e8d8 g1h1 d8e8 h1g1 e8d8 g1h1 d8e8 h1g1 e8d8",
+        "go depth 3",
+    ]
+)
+
+assert_search_output(output, 3)
+assert "score cp 0 " in output[-2]
+assert output[-1] == "bestmove g1h1"
+
+# Mate in one from a four-field FEN
+output = run_uci(["position fen 7k/8/5KQ1/8/8/8/8/8 w - -", "go depth 2"])
+assert_search_output(output, 2)
+assert output[-1] == "bestmove g6g7"
+
+# Test 25: Malformed position commands are rejected and leave the previous position in place
+session = Engine(stderr=subprocess.DEVNULL)
+
+for command in [
+    # Malformed FENs
+    "position fen",
+    "position fen moves e2e4",
+    "position fen 4k3/8/8/8/4q3/8/4R3",
+    "position fen 4k3/8/8/8/4q3/8/4R3/4K3 w -",
+    "position fen 4k3/8/8/8/8/8/8/8 w - - 0 1",
+    "position fen 4k3/8/8/8/4q3/8/4R3/4K3/8 w - - 0 1",
+    "position fen 4k3/8/8/8/4q3/8/4R3/4K3 x - - 0 1",
+    # Moves without the moves keyword are not taken as move counters
+    "position fen 4k3/8/8/8/4q3/8/4R3/4K3 b - - e4e2",
+    "position fen 4k3/8/8/8/4q3/8/4R3/4K3 b - - 0 1 e4e2",
+    "position startpos e2e4",
+    # An illegal move discards the moves before it as well
+    "position startpos moves e2e4 e7e5 e1e3",
+    "position fen 4k3/8/8/8/4q3/8/4R3/4K3 b - - moves e8d8 e2e4 e4e1",
+    "position unknown",
+]:
+    session.send(f"position fen {FREE_QUEEN} 0 1")
+    session.send(command)
+
+    output = session.search("go depth 3")
+    assert output[-1] == "bestmove e2e4", (command, output[-1])
+
+    session.send("isready")
+    assert session.read_until("readyok") == ["readyok"], command
 
 assert session.quit() == []
 

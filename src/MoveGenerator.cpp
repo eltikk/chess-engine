@@ -59,7 +59,6 @@ void MoveGenerator::generateKnightMoves(const Board& board, MoveList& moveList) 
     while (knights) {
         int fromSquare = BitUtils::popLSB(knights);
         
-        // Attack table masked with non-friendly squares
         std::uint64_t targets = getKnightAttacks(fromSquare) & ~friendly;
 
         while (targets) {
@@ -193,8 +192,6 @@ void MoveGenerator::generateKingMoves(const Board& board, MoveList& moveList){
 
 template <bool isWhite>
 void MoveGenerator::generatePawnMoves(const Board& board, MoveList& moveList) {
-    
-    // Compile-time Constants
     constexpr Piece pawnPiece   = isWhite ? Piece::WHITE_PAWN   : Piece::BLACK_PAWN;
     constexpr Piece queenPiece  = isWhite ? Piece::WHITE_QUEEN  : Piece::BLACK_QUEEN;
     constexpr Piece rookPiece   = isWhite ? Piece::WHITE_ROOK   : Piece::BLACK_ROOK;
@@ -208,15 +205,11 @@ void MoveGenerator::generatePawnMoves(const Board& board, MoveList& moveList) {
     constexpr int captureLeftOffset     = isWhite ? 7 : -9;
     constexpr int captureRightOffset    = isWhite ? 9 : -7;
 
-    
-    // Board State Extraction
     uint64_t pawns           = board.getPieceBitboard(pawnPiece);
     uint64_t occupied        = board.getOccupied();
     uint64_t enemy           = board.getEnemyPieces();
     int enPassantSquare      = board.getEnPassantSquare();
 
-    
-    // 1. PUSHES (Single & Double)
     uint64_t singlePushes = (isWhite ? (pawns << 8) : (pawns >> 8)) & ~occupied;
 
     // Non-promotion single pushes 
@@ -234,8 +227,6 @@ void MoveGenerator::generatePawnMoves(const Board& board, MoveList& moveList) {
         moveList.add({static_cast<uint8_t>(to - 2 * pushOffset), static_cast<uint8_t>(to), MoveType::DoublePawnPush});
     }
 
-    
-    // 2. CAPTURES (Left & Right)    
     uint64_t leftCaptures  = (isWhite ? ((pawns & NOT_A) << 7) : ((pawns & NOT_A) >> 9)) & enemy;
     uint64_t rightCaptures = (isWhite ? ((pawns & NOT_H) << 9) : ((pawns & NOT_H) >> 7)) & enemy;
 
@@ -255,8 +246,6 @@ void MoveGenerator::generatePawnMoves(const Board& board, MoveList& moveList) {
     }
 
 
-    
-    // 3. PROMOTIONS (Push & Capture)    
     uint64_t promotionPushes = singlePushes & promotionRank;
 
     auto addPromotions = [&](int from, int to, MoveType type) {
@@ -283,7 +272,7 @@ void MoveGenerator::generatePawnMoves(const Board& board, MoveList& moveList) {
 
 
     
-    // 4. en Passant    
+    // Pawns that can capture en passant stand where an enemy pawn on the target square would attack
     if (enPassantSquare != -1) {
         uint64_t enPassantAttackers = getPawnAttacks(enPassantSquare, !isWhite) & pawns;
         while (enPassantAttackers) {
