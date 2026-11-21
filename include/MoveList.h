@@ -3,7 +3,9 @@
 #include "Move.h"
 
 struct MoveList{
-    Move moves[256];
+    static constexpr int capacity = 256;
+
+    Move moves[capacity];
     int count = 0;
 
     void add(const Move& move){

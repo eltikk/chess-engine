@@ -67,6 +67,26 @@ int scoreMove(const Board& board, const Move& move) {
     }
 }
 
+struct ScoredMove {
+    int score;
+    Move move;
+};
+
+void orderMoves(const Board& board, MoveList& moves) {
+    ScoredMove scored[MoveList::capacity];
+
+    for (int i = 0; i < moves.count; ++i) {
+        scored[i] = ScoredMove{scoreMove(board, moves.moves[i]), moves.moves[i]};
+    }
+
+    std::sort(scored, scored + moves.count,
+              [](const ScoredMove& a, const ScoredMove& b) { return a.score > b.score; });
+
+    for (int i = 0; i < moves.count; ++i) {
+        moves.moves[i] = scored[i].move;
+    }
+}
+
 bool sameMove(const Move& a, const Move& b) {
     return a.from == b.from && a.to == b.to && a.promotionPiece == b.promotionPiece;
 }
@@ -201,9 +221,7 @@ int quiescence(Board& board, int alpha, int beta, int ply, std::uint64_t* qNodes
         return bestScore;
     }
 
-    std::sort(moves.moves, moves.moves + moves.count, [&board](const Move& a, const Move& b) {
-        return scoreMove(board, a) > scoreMove(board, b);
-    });
+    orderMoves(board, moves);
 
     for (int i = 0; i < moves.count; ++i) {
         const Move& move = moves.moves[i];
@@ -293,9 +311,7 @@ int Search::negamax(Board& board, int depth, int ply, int alpha, int beta, std::
         return 0;
     }
 
-    std::sort(moves.moves, moves.moves + moves.count, [&board](const Move& a, const Move& b) {
-        return scoreMove(board, a) > scoreMove(board, b);
-    });
+    orderMoves(board, moves);
 
     // Search the stored best move first, keeping the MVV-LVA order of the remaining moves
     for (int i = 0; i < moves.count; ++i) {
@@ -381,9 +397,7 @@ std::optional<Move> Search::findBestMove(Board& board, const Limits& limits,
         return std::nullopt;
     }
 
-    std::sort(moves.moves, moves.moves + moves.count, [&board](const Move& a, const Move& b) {
-        return scoreMove(board, a) > scoreMove(board, b);
-    });
+    orderMoves(board, moves);
 
     constexpr int infinity = 1000000;
 
