@@ -48,13 +48,29 @@ class Search {
     // Quiet moves that caused a beta cutoff, two per ply, the most recent first
     using KillerTable = std::array<std::array<Move, 2>, maxSearchDepth>;
 
+    // Scores of quiet moves that caused beta cutoffs, by side to move (1 for white), origin and
+    // destination square
+    using HistoryTable = std::array<std::array<std::array<int, 64>, 64>, 2>;
+
+    // Quiet move ordering learned during one search and kept across its iterations
+    struct MoveOrdering {
+        // Below every capture and promotion score, so history only orders quiet moves
+        static constexpr int maxHistory = 8192;
+
+        KillerTable killers{};
+        HistoryTable history{};
+
+        // Rewards a quiet move that caused a beta cutoff, keeping the score within maxHistory
+        void updateHistory(bool whiteToMove, const Move& move, int depth);
+    };
+
     // If given, historyPly is lowered to the ply of the earliest position a repetition draw in this
     // search relied on (negative for positions before the root).
     static int negamax(Board& board, int depth, int ply = 0, int alpha = -1000000,
                        int beta = 1000000, std::uint64_t* nodes = nullptr,
                        std::uint64_t* qNodes = nullptr, TranspositionTable* tt = nullptr,
                        int* historyPly = nullptr, Control* control = nullptr,
-                       KillerTable* killers = nullptr);
+                       MoveOrdering* ordering = nullptr);
     static std::optional<Move> findBestMove(Board& board, int maxDepth,
                                             const IterationCallback& onIteration = {});
     // Returns the best move of the last completed iteration, or a legal fallback move if none

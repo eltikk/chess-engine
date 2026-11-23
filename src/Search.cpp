@@ -35,7 +35,7 @@ int pieceValue(char piece) {
     }
 }
 
-int scoreMove(const Board& board, const Move& move) {
+int scoreMove(const Board& board, const Move& move, const Search::HistoryTable* history) {
     constexpr int pieceValues[6] = {100, 320, 330, 500, 900, 0};
 
     switch (move.type) {
@@ -63,20 +63,23 @@ int scoreMove(const Board& board, const Move& move) {
         return 10900;
 
     default:
-        return 0;
+        return history != nullptr ? (*history)[board.isWhiteToMove()][move.from][move.to] : 0;
     }
 }
+
+static_assert(Search::MoveOrdering::maxHistory < 10000, "history must rank below captures");
 
 struct ScoredMove {
     int score;
     Move move;
 };
 
-void orderMoves(const Board& board, MoveList& moves) {
+void orderMoves(const Board& board, MoveList& moves,
+                const Search::HistoryTable* history = nullptr) {
     ScoredMove scored[MoveList::capacity];
 
     for (int i = 0; i < moves.count; ++i) {
-        scored[i] = ScoredMove{scoreMove(board, moves.moves[i]), moves.moves[i]};
+        scored[i] = ScoredMove{scoreMove(board, moves.moves[i], history), moves.moves[i]};
     }
 
     std::sort(scored, scored + moves.count,
@@ -295,9 +298,20 @@ int quiescence(Board& board, int alpha, int beta, int ply, std::uint64_t* qNodes
 
 } // namespace
 
+void Search::MoveOrdering::updateHistory(bool whiteToMove, const Move& move, int depth) {
+    static_assert(maxSearchDepth * maxSearchDepth <= maxHistory);
+
+    int& score = history[whiteToMove][move.from][move.to];
+    const int clampedDepth = std::clamp(depth, 0, maxSearchDepth);
+    const int bonus = clampedDepth * clampedDepth;
+
+    // Approaches maxHistory without passing it, however often the move is rewarded
+    score += bonus - score * bonus / maxHistory;
+}
+
 int Search::negamax(Board& board, int depth, int ply, int alpha, int beta, std::uint64_t* nodes,
                     std::uint64_t* qNodes, TranspositionTable* tt, int* historyPly,
-                    Control* control, KillerTable* killers) {
+                    Control* control, MoveOrdering* ordering) {
 
     // Leaf nodes are counted in qNodes by quiescence, so check depth before counting here.
     if (depth <= 0) {
@@ -349,12 +363,12 @@ int Search::negamax(Board& board, int depth, int ply, int alpha, int beta, std::
         return 0;
     }
 
-    orderMoves(board, moves);
+    orderMoves(board, moves, ordering != nullptr ? &ordering->history : nullptr);
 
-    const bool useKillers = killers != nullptr && ply < maxSearchDepth;
+    const bool useKillers = ordering != nullptr && ply < maxSearchDepth;
 
     if (useKillers) {
-        orderKillers(moves, (*killers)[ply]);
+        orderKillers(moves, ordering->killers[ply]);
     }
 
     // Search the stored best move first, keeping the order of the remaining moves
@@ -377,7 +391,7 @@ int Search::negamax(Board& board, int depth, int ply, int alpha, int beta, std::
 
         board.makeMove(move, undo);
         int score = -negamax(board, depth - 1, ply + 1, -beta, -alpha, nodes, qNodes, tt,
-                             &subtreeHistoryPly, control, killers);
+                             &subtreeHistoryPly, control, ordering);
         board.unmakeMove(move, undo);
 
         if (wasStopped(control)) {
@@ -394,8 +408,12 @@ int Search::negamax(Board& board, int depth, int ply, int alpha, int beta, std::
         }
 
         if (alpha >= beta) {
-            if (useKillers && isQuiet(move)) {
-                storeKiller((*killers)[ply], move);
+            if (ordering != nullptr && isQuiet(move)) {
+                if (useKillers) {
+                    storeKiller(ordering->killers[ply], move);
+                }
+
+                ordering->updateHistory(board.isWhiteToMove(), move, depth);
             }
 
             break;
@@ -459,7 +477,7 @@ std::optional<Move> Search::findBestMove(Board& board, const Limits& limits,
 
     // Owned by this search so they persist across iterations without leaking into other searches
     TranspositionTable tt;
-    KillerTable killers{};
+    MoveOrdering ordering;
 
     Control control;
     control.stopRequested = stopRequested;
@@ -508,7 +526,7 @@ std::optional<Move> Search::findBestMove(Board& board, const Limits& limits,
             board.makeMove(move, undo);
 
             int score = -negamax(board, depth - 1, 1, -beta, -alpha, &nodes, &qNodes, &tt, nullptr,
-                                 &control, &killers);
+                                 &control, &ordering);
 
             board.unmakeMove(move, undo);
 

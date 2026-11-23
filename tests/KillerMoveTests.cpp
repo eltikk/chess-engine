@@ -96,12 +96,12 @@ TEST_CASE("Killer moves do not change the alpha-beta score") {
         board.loadFEN(scenario.fen);
 
         // Shared across depths, as in iterative deepening
-        Search::KillerTable killers{};
+        Search::MoveOrdering ordering;
 
         for (int depth = 1; depth <= scenario.depth; ++depth) {
             const int plainScore = Search::negamax(board, depth);
             const int killerScore = Search::negamax(board, depth, 0, -1000000, 1000000, nullptr,
-                                                    nullptr, nullptr, nullptr, nullptr, &killers);
+                                                    nullptr, nullptr, nullptr, nullptr, &ordering);
 
             EXPECT_EQ(plainScore, killerScore);
         }
@@ -116,15 +116,15 @@ TEST_CASE("Search records only distinct quiet killer moves") {
         board.loadFEN(scenario.fen);
 
         TranspositionTable tt(1);
-        Search::KillerTable killers{};
+        Search::MoveOrdering ordering;
 
         for (int depth = 1; depth <= scenario.depth; ++depth) {
             Search::negamax(board, depth, 0, -1000000, 1000000, nullptr, nullptr, &tt, nullptr,
-                            nullptr, &killers);
+                            nullptr, &ordering);
         }
 
-        anyKiller = anyKiller || hasKiller(killers);
-        EXPECT_TRUE(validKillers(killers));
+        anyKiller = anyKiller || hasKiller(ordering.killers);
+        EXPECT_TRUE(validKillers(ordering.killers));
     }
 
     EXPECT_TRUE(anyKiller);
@@ -145,17 +145,17 @@ TEST_CASE("Killers that are not quiet moves in the position are ignored") {
 
     constexpr int depth = 3;
 
-    Search::KillerTable emptyKillers{};
+    Search::MoveOrdering emptyOrdering;
     std::uint64_t emptyNodes = 0;
     const int emptyScore = Search::negamax(board, depth, 0, -1000000, 1000000, &emptyNodes, nullptr,
-                                           nullptr, nullptr, nullptr, &emptyKillers);
+                                           nullptr, nullptr, nullptr, &emptyOrdering);
 
     // The root never fails high with a full window, so its killers are never replaced
-    Search::KillerTable killers{};
-    killers[0] = {capture, illegal};
+    Search::MoveOrdering ordering;
+    ordering.killers[0] = {capture, illegal};
     std::uint64_t nodes = 0;
     const int score = Search::negamax(board, depth, 0, -1000000, 1000000, &nodes, nullptr, nullptr,
-                                      nullptr, nullptr, &killers);
+                                      nullptr, nullptr, &ordering);
 
     EXPECT_EQ(emptyScore, score);
     EXPECT_EQ(emptyNodes, nodes);
@@ -187,20 +187,20 @@ TEST_CASE("Interrupting a search keeps the board and killer moves valid") {
 
     for (std::uint64_t call = 1; call <= Search::stopCheckInterval; call += 37) {
         TranspositionTable tt(1);
-        Search::KillerTable killers{};
+        Search::MoveOrdering ordering;
 
         Search::Control control;
         control.stopRequested = &stopRequested;
         control.checkCounter = Search::stopCheckInterval - call;
 
         Search::negamax(board, 4, 0, -1000000, 1000000, nullptr, nullptr, &tt, nullptr, &control,
-                        &killers);
+                        &ordering);
 
         allRestored = allRestored && board.getHash() == original.getHash() &&
                       board.getHalfmoveClock() == original.getHalfmoveClock() &&
                       board.getHistory() == original.getHistory();
-        allValid = allValid && validKillers(killers);
-        anyKiller = anyKiller || hasKiller(killers);
+        allValid = allValid && validKillers(ordering.killers);
+        anyKiller = anyKiller || hasKiller(ordering.killers);
     }
 
     EXPECT_TRUE(allRestored);
