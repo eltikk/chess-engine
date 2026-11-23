@@ -221,15 +221,25 @@ int quiescence(Board& board, int alpha, int beta, int ply, std::uint64_t* qNodes
         return bestScore;
     }
 
+    if (!inCheck) {
+        int tacticalCount = 0;
+
+        for (int i = 0; i < moves.count; ++i) {
+            const MoveType type = moves.moves[i].type;
+
+            if (type == MoveType::Capture || type == MoveType::PromotionCapture ||
+                type == MoveType::EnPassant || type == MoveType::Promotion) {
+                moves.moves[tacticalCount++] = moves.moves[i];
+            }
+        }
+
+        moves.count = tacticalCount;
+    }
+
     orderMoves(board, moves);
 
     for (int i = 0; i < moves.count; ++i) {
         const Move& move = moves.moves[i];
-
-        if (!inCheck && move.type != MoveType::Capture && move.type != MoveType::PromotionCapture &&
-            move.type != MoveType::EnPassant && move.type != MoveType::Promotion) {
-            continue;
-        }
 
         UndoState undo;
 
