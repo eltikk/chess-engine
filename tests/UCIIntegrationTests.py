@@ -119,6 +119,7 @@ output = run_uci(["uci", "isready"])
 assert output == [
     "id name EltiChess",
     "id author Elti",
+    "option name Hash type spin default 64 min 1 max 1024",
     "uciok",
     "readyok",
 ]
@@ -562,6 +563,147 @@ for command in [
 
     session.send("isready")
     assert session.read_until("readyok") == ["readyok"], command
+
+assert session.quit() == []
+
+
+def last_nodes(output):
+    return int(re.search(r" nodes (\d+) ", [line for line in output if line.startswith("info ")][-1]).group(1))
+
+
+def ready(session):
+    session.send("isready")
+    assert session.read_until("readyok") == ["readyok"]
+
+
+# Test 26: The transposition table is kept between searches and cleared by ucinewgame
+session = Engine()
+
+session.send("position startpos")
+first = session.search("go depth 6")
+second = session.search("go depth 6")
+
+session.send("ucinewgame")
+ready(session)
+session.send("position startpos")
+after_new_game = session.search("go depth 6")
+
+assert_search_output(first, 6)
+assert_search_output(second, 6)
+assert_search_output(after_new_game, 6)
+assert last_nodes(second) < last_nodes(first)
+assert last_nodes(after_new_game) == last_nodes(first)
+assert after_new_game[-1] == first[-1]
+assert session.quit() == []
+
+# Test 27: The Hash option resizes the table, which starts empty unless its size is unchanged
+KIWIPETE = "position fen r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1"
+
+
+def fresh_search(options, position, go):
+    session = Engine()
+    for option in options:
+        session.send(option)
+    ready(session)
+    session.send(position)
+    output = session.search(go)
+    assert session.quit() == []
+    return output
+
+
+default = fresh_search([], KIWIPETE, "go depth 4")
+small = fresh_search(["setoption name Hash value 1"], KIWIPETE, "go depth 4")
+assert last_nodes(small) != last_nodes(default)
+
+# Option names are case-insensitive, and resizing drops the entries of earlier searches
+session = Engine()
+session.send("position startpos")
+session.search("go depth 4")
+session.send("setoption name hash value 1")
+ready(session)
+session.send(KIWIPETE)
+resized = session.search("go depth 4")
+assert last_nodes(resized) == last_nodes(small)
+
+# The same size again keeps the entries
+session.send("setoption name Hash value 1")
+ready(session)
+kept = session.search("go depth 4")
+assert last_nodes(kept) < last_nodes(resized)
+
+# Out-of-range values are clamped; malformed or unknown options are ignored
+for command in [
+    "setoption name Hash value 0",
+    "setoption name Hash value 100000",
+    "setoption name Hash value abc",
+    "setoption name Hash",
+    "setoption name Threads value 4",
+    "setoption",
+]:
+    session.send(command)
+    ready(session)
+    session.send("position startpos")
+    output = session.search("go depth 3")
+    assert_search_output(output, 3)
+
+assert session.quit() == []
+
+session = Engine()
+session.send("setoption name Hash value 64")
+ready(session)
+session.send("position startpos")
+output = session.search("go depth 6")
+assert_search_output(output, 6)
+assert session.quit() == []
+
+# Test 28: ucinewgame or setoption during a search ends the search before changing the table
+for command in ["ucinewgame", "setoption name Hash value 32"]:
+    session = Engine()
+    session.send("position startpos")
+    session.send("go infinite")
+    session.read_until(r"info depth 2 .*")
+    session.send(command)
+
+    output = session.read_until(BESTMOVE.pattern)
+    assert output[-1].split()[1] in STARTPOS_MOVES, command
+    ready(session)
+
+    session.send("position startpos")
+    output = session.search("go depth 3")
+    assert_search_output(output, 3)
+    assert session.quit() == []
+
+# Test 29: Entries from earlier searches keep mate distances and draws correct as the game moves on
+session = Engine()
+
+session.send("position fen k7/8/2K5/8/8/8/8/7R w - - 0 1")
+output = session.search("go depth 5")
+assert "score mate 2 " in output[-2]
+
+session.send("position fen k7/8/2K5/8/8/8/8/7R w - - 0 1 moves c6b6 a8b8")
+output = session.search("go depth 5")
+assert "score mate 1 " in output[-2]
+assert output[-1] == "bestmove h1h8"
+
+session.send("position fen 4k3/8/8/8/8/8/q7/7K w - - 0 1")
+output = session.search("go depth 4")
+assert int(re.search(r"score cp (-?\d+)", output[-2]).group(1)) < -500
+
+session.send(
+    "position fen 4k3/8/8/8/8/8/q7/7K w - - 0 1 moves "
+    "h1g1 e8d8 g1h1 d8e8 h1g1 e8d8 g1h1 d8e8 h1g1 e8d8"
+)
+output = session.search("go depth 4")
+assert "score cp 0 " in output[-2]
+assert output[-1] == "bestmove g1h1"
+
+session.send("position fen 7k/8/8/8/8/8/1Q6/K7 w - - 0 80")
+output = session.search("go depth 4")
+assert int(re.search(r"score cp (-?\d+)", output[-2]).group(1)) > 500
+
+session.send("position fen 7k/8/8/8/8/8/1Q6/K7 w - - 99 80")
+output = session.search("go depth 4")
+assert "score cp 0 " in output[-2]
 
 assert session.quit() == []
 

@@ -2,9 +2,11 @@
 #include "MoveGenerator.h"
 #include "MoveList.h"
 #include "Search.h"
+#include "TranspositionTable.h"
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <cstdint>
 #include <cstdlib>
 #include <iostream>
@@ -199,6 +201,33 @@ std::optional<Board> parsePosition(const std::string& command) {
     return position;
 }
 
+constexpr std::int64_t maxHashMb = 1024;
+
+// Returns the requested size of "setoption name Hash value <MB>", or nothing for other options.
+// Option names are case-insensitive.
+std::optional<std::size_t> parseHashOption(const std::string& command) {
+    std::istringstream input(command);
+    std::string setoption;
+    std::string nameKeyword;
+    std::string name;
+    std::string valueKeyword;
+    std::int64_t value = 0;
+
+    if (!(input >> setoption >> nameKeyword >> name >> valueKeyword >> value) ||
+        nameKeyword != "name" || valueKeyword != "value") {
+        return std::nullopt;
+    }
+
+    std::transform(name.begin(), name.end(), name.begin(),
+                   [](unsigned char c) { return std::tolower(c); });
+
+    if (name != "hash") {
+        return std::nullopt;
+    }
+
+    return static_cast<std::size_t>(std::clamp<std::int64_t>(value, 1, maxHashMb));
+}
+
 } // namespace
 
 int main() {
@@ -206,6 +235,9 @@ int main() {
 
     Board board;
     std::string command;
+
+    // Kept across searches and moves of a game; only changed while no search is running
+    TranspositionTable tt;
 
     std::thread searchThread;
     std::atomic<bool> stopRequested = false;
@@ -226,6 +258,9 @@ int main() {
         if (command == "uci") {
             send("id name EltiChess");
             send("id author Elti");
+            send("option name Hash type spin default " +
+                 std::to_string(TranspositionTable::defaultSizeMb) + " min 1 max " +
+                 std::to_string(maxHashMb));
             send("uciok");
         }
 
@@ -233,8 +268,18 @@ int main() {
             send("readyok");
         }
 
+        // Neither is expected during a search, but if one arrives, the search ends first
         else if (command == "ucinewgame") {
+            stopSearch();
             board.setStartingPosition();
+            tt.clear();
+        }
+
+        else if (command.rfind("setoption ", 0) == 0) {
+            if (const std::optional<std::size_t> sizeMb = parseHashOption(command)) {
+                stopSearch();
+                tt.resize(*sizeMb);
+            }
         }
 
         else if (command.rfind("position ", 0) == 0) {
@@ -254,10 +299,10 @@ int main() {
 
             // The search gets its own board, so later position commands cannot race with it
             searchThread =
-                std::thread([searchBoard = board, go, &stopRequested, &quitting]() mutable {
+                std::thread([searchBoard = board, go, &stopRequested, &quitting, &tt]() mutable {
                     auto bestMove = Search::findBestMove(
                         searchBoard, go.limits, &stopRequested,
-                        [](const Search::IterationInfo& info) { send(formatInfo(info)); });
+                        [](const Search::IterationInfo& info) { send(formatInfo(info)); }, &tt);
 
                     // In infinite mode bestmove is only sent once the GUI asks for it
                     if (go.infinite) {

@@ -1,4 +1,5 @@
 #include "TranspositionTable.h"
+#include <algorithm>
 
 namespace {
 
@@ -33,7 +34,9 @@ int scoreFromTable(int score, int ply) {
 
 } // namespace
 
-TranspositionTable::TranspositionTable(std::size_t sizeMb) {
+TranspositionTable::TranspositionTable(std::size_t sizeMb) { resize(sizeMb); }
+
+void TranspositionTable::resize(std::size_t sizeMb) {
     const std::size_t maxEntries = sizeMb * 1024 * 1024 / sizeof(Entry);
 
     std::size_t count = 1;
@@ -42,7 +45,20 @@ TranspositionTable::TranspositionTable(std::size_t sizeMb) {
         count *= 2;
     }
 
+    if (count == entries.size()) {
+        return;
+    }
+
+    entries = std::vector<Entry>();
     entries.resize(count);
+    hits = 0;
+    cutoffs = 0;
+}
+
+void TranspositionTable::clear() {
+    std::fill(entries.begin(), entries.end(), Entry{});
+    hits = 0;
+    cutoffs = 0;
 }
 
 bool TranspositionTable::probe(std::uint64_t key, int depth, int alpha, int beta, int ply,

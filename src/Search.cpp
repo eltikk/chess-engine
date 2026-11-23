@@ -455,7 +455,8 @@ std::optional<Move> Search::findBestMove(Board& board, int maxDepth,
 
 std::optional<Move> Search::findBestMove(Board& board, const Limits& limits,
                                          const std::atomic<bool>* stopRequested,
-                                         const IterationCallback& onIteration) {
+                                         const IterationCallback& onIteration,
+                                         TranspositionTable* tt) {
     MoveList moves;
     MoveGenerator::generateLegalMoves(board, moves);
 
@@ -475,8 +476,17 @@ std::optional<Move> Search::findBestMove(Board& board, const Limits& limits,
 
     std::uint64_t totalNodes = 0;
 
-    // Owned by this search so they persist across iterations without leaking into other searches
-    TranspositionTable tt;
+    std::optional<TranspositionTable> ownTable;
+
+    if (tt == nullptr) {
+        tt = &ownTable.emplace();
+    }
+
+    // The table may hold counts from earlier searches
+    const std::uint64_t initialHits = tt->getHits();
+    const std::uint64_t initialCutoffs = tt->getCutoffs();
+
+    // Owned by this search so it persists across iterations without leaking into other searches
     MoveOrdering ordering;
 
     Control control;
@@ -525,7 +535,7 @@ std::optional<Move> Search::findBestMove(Board& board, const Limits& limits,
             UndoState undo;
             board.makeMove(move, undo);
 
-            int score = -negamax(board, depth - 1, 1, -beta, -alpha, &nodes, &qNodes, &tt, nullptr,
+            int score = -negamax(board, depth - 1, 1, -beta, -alpha, &nodes, &qNodes, tt, nullptr,
                                  &control, &ordering);
 
             board.unmakeMove(move, undo);
@@ -562,7 +572,8 @@ std::optional<Move> Search::findBestMove(Board& board, const Limits& limits,
 
         if (bestMove.has_value() && onIteration) {
             onIteration(IterationInfo{depth, *bestMove, bestScore, totalNodes, timeMs, nps,
-                                      tt.getHits(), tt.getCutoffs()});
+                                      tt->getHits() - initialHits,
+                                      tt->getCutoffs() - initialCutoffs});
         }
     }
 

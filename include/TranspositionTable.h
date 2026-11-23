@@ -18,7 +18,14 @@ class TranspositionTable {
         bool valid = false;
     };
 
-    explicit TranspositionTable(std::size_t sizeMb = 16);
+    static constexpr std::size_t defaultSizeMb = 64;
+
+    explicit TranspositionTable(std::size_t sizeMb = defaultSizeMb);
+
+    // Frees the old entries before allocating the new ones; keeps them if the entry count is
+    // unchanged
+    void resize(std::size_t sizeMb);
+    void clear();
 
     // Returns true when the stored score can be returned for this window. The stored best move is
     // written to bestMove whenever the full key matches, even if the score is unusable.

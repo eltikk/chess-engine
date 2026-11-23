@@ -74,10 +74,12 @@ class Search {
     static std::optional<Move> findBestMove(Board& board, int maxDepth,
                                             const IterationCallback& onIteration = {});
     // Returns the best move of the last completed iteration, or a legal fallback move if none
-    // completed. Returns nothing only when there are no legal moves.
+    // completed. Returns nothing only when there are no legal moves. A given table keeps its
+    // entries for later searches; otherwise the search uses a table of its own.
     static std::optional<Move> findBestMove(Board& board, const Limits& limits,
                                             const std::atomic<bool>* stopRequested,
-                                            const IterationCallback& onIteration = {});
+                                            const IterationCallback& onIteration = {},
+                                            TranspositionTable* tt = nullptr);
 
     // Time to spend on one move from the side to move's clock, always at least 1 ms
     static std::int64_t allocateTimeMs(std::int64_t timeMs, std::int64_t incMs,

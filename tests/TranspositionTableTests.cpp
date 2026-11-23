@@ -2,6 +2,9 @@
 #include "Search.h"
 #include "TestUtils.h"
 #include "TranspositionTable.h"
+#include <atomic>
+#include <optional>
+#include <string>
 #include <vector>
 
 namespace {
@@ -35,6 +38,64 @@ bool boardsMatch(const Board& a, const Board& b) {
            a.getFullmoveCounter() == b.getFullmoveCounter() && a.getHash() == b.getHash();
 }
 
+bool isLegal(Board& board, const Move& move) {
+    MoveList moves;
+    MoveGenerator::generateLegalMoves(board, moves);
+
+    for (int i = 0; i < moves.count; ++i) {
+        if (moves.moves[i].toUCI() == move.toUCI()) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+struct SearchResult {
+    std::optional<Move> bestMove;
+    std::vector<Search::IterationInfo> iterations;
+};
+
+// A null table gives the search a table of its own, as for a search without a caller-owned one
+SearchResult searchWith(Board& board, int depth, TranspositionTable* tt) {
+    Search::Limits limits;
+    limits.depth = depth;
+
+    SearchResult result;
+    result.bestMove = Search::findBestMove(
+        board, limits, nullptr,
+        [&result](const Search::IterationInfo& info) { result.iterations.push_back(info); }, tt);
+
+    return result;
+}
+
+void expectSameSearch(const SearchResult& expected, const SearchResult& actual) {
+    EXPECT_EQ(expected.iterations.size(), actual.iterations.size());
+
+    for (std::size_t i = 0; i < expected.iterations.size() && i < actual.iterations.size(); ++i) {
+        EXPECT_EQ(expected.iterations[i].score, actual.iterations[i].score);
+        EXPECT_EQ(expected.iterations[i].nodes, actual.iterations[i].nodes);
+        EXPECT_EQ(expected.iterations[i].ttHits, actual.iterations[i].ttHits);
+        EXPECT_EQ(expected.iterations[i].ttCutoffs, actual.iterations[i].ttCutoffs);
+        EXPECT_EQ(expected.iterations[i].bestMove.toUCI(), actual.iterations[i].bestMove.toUCI());
+    }
+}
+
+void playMoves(Board& board, const std::vector<std::string>& moves) {
+    for (const std::string& uci : moves) {
+        MoveList legal;
+        MoveGenerator::generateLegalMoves(board, legal);
+
+        for (int i = 0; i < legal.count; ++i) {
+            if (legal.moves[i].toUCI() == uci) {
+                UndoState undo;
+                board.makeMove(legal.moves[i], undo);
+                break;
+            }
+        }
+    }
+}
+
 } // namespace
 
 TEST_CASE("Transposition table size is a power of two within budget") {
@@ -42,8 +103,10 @@ TEST_CASE("Transposition table size is a power of two within budget") {
 
     EXPECT_TRUE(tt.size() > 0);
     EXPECT_EQ(0ULL, tt.size() & (tt.size() - 1));
-    EXPECT_TRUE(tt.size() * sizeof(TranspositionTable::Entry) <= 16ULL * 1024 * 1024);
-    EXPECT_TRUE(tt.size() * 2 * sizeof(TranspositionTable::Entry) > 16ULL * 1024 * 1024);
+    constexpr std::size_t budget = TranspositionTable::defaultSizeMb * 1024 * 1024;
+
+    EXPECT_TRUE(tt.size() * sizeof(TranspositionTable::Entry) <= budget);
+    EXPECT_TRUE(tt.size() * 2 * sizeof(TranspositionTable::Entry) > budget);
 }
 
 TEST_CASE("Transposition table misses on an empty table") {
@@ -378,4 +441,150 @@ TEST_CASE("Search stores a legal best move for the root") {
     }
 
     EXPECT_TRUE(legal);
+}
+
+TEST_CASE("Transposition table resize keeps an unchanged size and clear empties the table") {
+    TranspositionTable tt(1);
+    const std::size_t oneMbSize = tt.size();
+    int score = 0;
+
+    tt.store(testKey, 4, 37, Bound::Exact, testMove, 0);
+    tt.resize(1);
+    EXPECT_EQ(oneMbSize, tt.size());
+    EXPECT_TRUE(probeScore(tt, testKey, 4, -1000000, 1000000, score));
+
+    tt.clear();
+    EXPECT_EQ(oneMbSize, tt.size());
+    EXPECT_EQ(0ULL, tt.getHits());
+    EXPECT_FALSE(probeScore(tt, testKey, 0, -1000000, 1000000, score));
+
+    tt.store(testKey, 4, 37, Bound::Exact, testMove, 0);
+    tt.resize(2);
+    EXPECT_EQ(oneMbSize * 2, tt.size());
+    EXPECT_FALSE(probeScore(tt, testKey, 0, -1000000, 1000000, score));
+    EXPECT_EQ(0ULL, tt.getHits());
+
+    // Smaller than one entry still leaves a usable table
+    tt.resize(0);
+    EXPECT_EQ(1ULL, tt.size());
+    tt.store(testKey, 4, 37, Bound::Exact, testMove, 0);
+    EXPECT_TRUE(probeScore(tt, testKey, 4, -1000000, 1000000, score));
+}
+
+TEST_CASE("A caller-owned table searches like a search-owned one until it is reused") {
+    Board board;
+    board.loadFEN("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1");
+
+    const SearchResult cold = searchWith(board, 4, nullptr);
+
+    TranspositionTable tt;
+    expectSameSearch(cold, searchWith(board, 4, &tt));
+
+    // The second search starts from the first one's entries
+    const std::uint64_t hitsBefore = tt.getHits();
+    const SearchResult warm = searchWith(board, 4, &tt);
+
+    EXPECT_TRUE(warm.bestMove.has_value() && isLegal(board, *warm.bestMove));
+    EXPECT_TRUE(warm.iterations.back().nodes < cold.iterations.back().nodes);
+    // Depth 1 goes straight to quiescence, which does not use the table
+    EXPECT_TRUE(warm.iterations[1].ttCutoffs > 0);
+
+    // Statistics are counted per search, not over the table's lifetime
+    EXPECT_EQ(tt.getHits() - hitsBefore, warm.iterations.back().ttHits);
+
+    // A cleared table behaves like a new one, as after ucinewgame
+    tt.clear();
+    expectSameSearch(cold, searchWith(board, 4, &tt));
+}
+
+TEST_CASE("Consecutive searches of different positions return legal moves") {
+    const char* fens[] = {
+        "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
+        "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1",
+        "r1bqk2r/ppp2ppp/2n2n2/2bpp3/2BPP3/2N2N2/PPP2PPP/R1BQK2R w KQkq - 0 1",
+        "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+    };
+
+    TranspositionTable tt(1);
+
+    for (const char* fen : fens) {
+        Board board;
+        board.loadFEN(fen);
+        const Board original = board;
+
+        const SearchResult result = searchWith(board, 4, &tt);
+
+        EXPECT_TRUE(boardsMatch(original, board));
+        EXPECT_TRUE(result.bestMove.has_value() && isLegal(board, *result.bestMove));
+        EXPECT_EQ(4ULL, result.iterations.size());
+    }
+}
+
+TEST_CASE("Mate distances stay correct when the table is reused after moves") {
+    // 1. Kb6 Kb8 2. Rh8#
+    Board board;
+    board.loadFEN("k7/8/2K5/8/8/8/8/7R w - - 0 1");
+
+    TranspositionTable tt(1);
+    EXPECT_EQ(mateScore - 3, searchWith(board, 5, &tt).iterations.back().score);
+
+    playMoves(board, {"c6b6", "a8b8"});
+
+    const SearchResult warm = searchWith(board, 5, &tt);
+    EXPECT_EQ(mateScore - 1, warm.iterations.back().score);
+    EXPECT_EQ(std::string("h1h8"), warm.bestMove->toUCI());
+}
+
+TEST_CASE("Entries stored without a game history do not hide repetition or fifty-move draws") {
+    // Without history the bare king is lost
+    Board board;
+    board.loadFEN("4k3/8/8/8/8/8/q7/7K w - - 0 1");
+
+    TranspositionTable tt(1);
+    EXPECT_TRUE(searchWith(board, 4, &tt).iterations.back().score < -500);
+
+    // After these moves g1h1 repeats a position for the third time
+    playMoves(board,
+              {"h1g1", "e8d8", "g1h1", "d8e8", "h1g1", "e8d8", "g1h1", "d8e8", "h1g1", "e8d8"});
+
+    const SearchResult repeated = searchWith(board, 4, &tt);
+    EXPECT_EQ(0, repeated.iterations.back().score);
+    EXPECT_EQ(std::string("g1h1"), repeated.bestMove->toUCI());
+
+    // Every move reaches the fifty-move limit in a position the table scored as winning
+    Board fresh;
+    fresh.loadFEN("7k/8/8/8/8/8/1Q6/K7 w - - 0 80");
+    EXPECT_TRUE(searchWith(fresh, 4, &tt).iterations.back().score > 500);
+
+    Board drawn;
+    drawn.loadFEN("7k/8/8/8/8/8/1Q6/K7 w - - 99 80");
+    EXPECT_EQ(0, searchWith(drawn, 4, &tt).iterations.back().score);
+}
+
+TEST_CASE("Interrupted searches leave a table that later searches can use") {
+    Board board;
+    board.loadFEN("r1bqk2r/ppp2ppp/2n2n2/2bpp3/2BPP3/2N2N2/PPP2PPP/R1BQK2R w KQkq - 0 1");
+    const Board original = board;
+
+    TranspositionTable tt(1);
+    const std::atomic<bool> stopRequested = true;
+    bool allRestored = true;
+    bool allLegal = true;
+
+    for (std::uint64_t call = 1; call <= Search::stopCheckInterval; call += 97) {
+        Search::Control control;
+        control.stopRequested = &stopRequested;
+        control.checkCounter = Search::stopCheckInterval - call;
+
+        Search::negamax(board, 5, 0, -1000000, 1000000, nullptr, nullptr, &tt, nullptr, &control);
+
+        const SearchResult next = searchWith(board, 3, &tt);
+
+        allRestored = allRestored && boardsMatch(original, board);
+        allLegal = allLegal && next.bestMove.has_value() && isLegal(board, *next.bestMove);
+    }
+
+    EXPECT_TRUE(allRestored);
+    EXPECT_TRUE(allLegal);
 }
