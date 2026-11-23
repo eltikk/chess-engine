@@ -3,6 +3,7 @@
 #include "Board.h"
 #include "Move.h"
 #include "TranspositionTable.h"
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -44,12 +45,16 @@ class Search {
         bool stopped = false;
     };
 
+    // Quiet moves that caused a beta cutoff, two per ply, the most recent first
+    using KillerTable = std::array<std::array<Move, 2>, maxSearchDepth>;
+
     // If given, historyPly is lowered to the ply of the earliest position a repetition draw in this
     // search relied on (negative for positions before the root).
     static int negamax(Board& board, int depth, int ply = 0, int alpha = -1000000,
                        int beta = 1000000, std::uint64_t* nodes = nullptr,
                        std::uint64_t* qNodes = nullptr, TranspositionTable* tt = nullptr,
-                       int* historyPly = nullptr, Control* control = nullptr);
+                       int* historyPly = nullptr, Control* control = nullptr,
+                       KillerTable* killers = nullptr);
     static std::optional<Move> findBestMove(Board& board, int maxDepth,
                                             const IterationCallback& onIteration = {});
     // Returns the best move of the last completed iteration, or a legal fallback move if none

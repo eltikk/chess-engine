@@ -91,6 +91,37 @@ bool sameMove(const Move& a, const Move& b) {
     return a.from == b.from && a.to == b.to && a.promotionPiece == b.promotionPiece;
 }
 
+bool isQuiet(const Move& move) {
+    return move.type == MoveType::Quiet || move.type == MoveType::DoublePawnPush ||
+           move.type == MoveType::KingCastle || move.type == MoveType::QueenCastle;
+}
+
+// Moves the killers to the front of the quiet moves, which follow the captures and promotions
+void orderKillers(MoveList& moves, const std::array<Move, 2>& killers) {
+    int next = 0;
+
+    while (next < moves.count && !isQuiet(moves.moves[next])) {
+        ++next;
+    }
+
+    for (const Move& killer : killers) {
+        for (int i = next; i < moves.count; ++i) {
+            if (sameMove(moves.moves[i], killer)) {
+                std::rotate(moves.moves + next, moves.moves + i, moves.moves + i + 1);
+                ++next;
+                break;
+            }
+        }
+    }
+}
+
+void storeKiller(std::array<Move, 2>& killers, const Move& move) {
+    if (!sameMove(move, killers[0])) {
+        killers[1] = killers[0];
+        killers[0] = move;
+    }
+}
+
 // No repetition draw was relied on
 constexpr int noHistoryPly = std::numeric_limits<int>::max();
 
@@ -225,10 +256,7 @@ int quiescence(Board& board, int alpha, int beta, int ply, std::uint64_t* qNodes
         int tacticalCount = 0;
 
         for (int i = 0; i < moves.count; ++i) {
-            const MoveType type = moves.moves[i].type;
-
-            if (type == MoveType::Capture || type == MoveType::PromotionCapture ||
-                type == MoveType::EnPassant || type == MoveType::Promotion) {
+            if (!isQuiet(moves.moves[i])) {
                 moves.moves[tacticalCount++] = moves.moves[i];
             }
         }
@@ -269,7 +297,7 @@ int quiescence(Board& board, int alpha, int beta, int ply, std::uint64_t* qNodes
 
 int Search::negamax(Board& board, int depth, int ply, int alpha, int beta, std::uint64_t* nodes,
                     std::uint64_t* qNodes, TranspositionTable* tt, int* historyPly,
-                    Control* control) {
+                    Control* control, KillerTable* killers) {
 
     // Leaf nodes are counted in qNodes by quiescence, so check depth before counting here.
     if (depth <= 0) {
@@ -323,7 +351,13 @@ int Search::negamax(Board& board, int depth, int ply, int alpha, int beta, std::
 
     orderMoves(board, moves);
 
-    // Search the stored best move first, keeping the MVV-LVA order of the remaining moves
+    const bool useKillers = killers != nullptr && ply < maxSearchDepth;
+
+    if (useKillers) {
+        orderKillers(moves, (*killers)[ply]);
+    }
+
+    // Search the stored best move first, keeping the order of the remaining moves
     for (int i = 0; i < moves.count; ++i) {
         if (sameMove(moves.moves[i], ttMove)) {
             std::rotate(moves.moves, moves.moves + i, moves.moves + i + 1);
@@ -343,7 +377,7 @@ int Search::negamax(Board& board, int depth, int ply, int alpha, int beta, std::
 
         board.makeMove(move, undo);
         int score = -negamax(board, depth - 1, ply + 1, -beta, -alpha, nodes, qNodes, tt,
-                             &subtreeHistoryPly, control);
+                             &subtreeHistoryPly, control, killers);
         board.unmakeMove(move, undo);
 
         if (wasStopped(control)) {
@@ -360,6 +394,10 @@ int Search::negamax(Board& board, int depth, int ply, int alpha, int beta, std::
         }
 
         if (alpha >= beta) {
+            if (useKillers && isQuiet(move)) {
+                storeKiller((*killers)[ply], move);
+            }
+
             break;
         }
     }
@@ -419,8 +457,9 @@ std::optional<Move> Search::findBestMove(Board& board, const Limits& limits,
 
     std::uint64_t totalNodes = 0;
 
-    // Owned by this search so it persists across iterations without leaking into other searches
+    // Owned by this search so they persist across iterations without leaking into other searches
     TranspositionTable tt;
+    KillerTable killers{};
 
     Control control;
     control.stopRequested = stopRequested;
@@ -469,7 +508,7 @@ std::optional<Move> Search::findBestMove(Board& board, const Limits& limits,
             board.makeMove(move, undo);
 
             int score = -negamax(board, depth - 1, 1, -beta, -alpha, &nodes, &qNodes, &tt, nullptr,
-                                 &control);
+                                 &control, &killers);
 
             board.unmakeMove(move, undo);
 
