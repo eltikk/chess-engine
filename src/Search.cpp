@@ -385,18 +385,43 @@ int Search::negamax(Board& board, int depth, int ply, int alpha, int beta, std::
     // Earliest occurrence relied on by repetition draws below this node
     int subtreeHistoryPly = noHistoryPly;
 
+    // Searches the move just made with the window (low, high), from this node's point of view
+    auto searchMove = [&](int low, int high, int* moveHistoryPly) {
+        return -negamax(board, depth - 1, ply + 1, -high, -low, nodes, qNodes, tt, moveHistoryPly,
+                        control, ordering);
+    };
+
     for (int i = 0; i < moves.count; ++i) {
         const Move& move = moves.moves[i];
         UndoState undo;
 
         board.makeMove(move, undo);
-        int score = -negamax(board, depth - 1, ply + 1, -beta, -alpha, nodes, qNodes, tt,
-                             &subtreeHistoryPly, control, ordering);
+
+        // Repetitions relied on by the search whose score is kept
+        int moveHistoryPly = noHistoryPly;
+        int score = 0;
+
+        // Principal variation search: the first move gets the full window. Later moves only need
+        // to be shown no better than alpha, which a null window does more cheaply; a move that
+        // beats alpha without reaching beta is searched again with the full window for its score.
+        if (i == 0) {
+            score = searchMove(alpha, beta, &moveHistoryPly);
+        } else {
+            score = searchMove(alpha, alpha + 1, &moveHistoryPly);
+
+            if (score > alpha && score < beta && !wasStopped(control)) {
+                moveHistoryPly = noHistoryPly;
+                score = searchMove(alpha, beta, &moveHistoryPly);
+            }
+        }
+
         board.unmakeMove(move, undo);
 
         if (wasStopped(control)) {
             return 0;
         }
+
+        subtreeHistoryPly = std::min(subtreeHistoryPly, moveHistoryPly);
 
         if (score > bestScore) {
             bestScore = score;
@@ -535,8 +560,23 @@ std::optional<Move> Search::findBestMove(Board& board, const Limits& limits,
             UndoState undo;
             board.makeMove(move, undo);
 
-            int score = -negamax(board, depth - 1, 1, -beta, -alpha, &nodes, &qNodes, tt, nullptr,
-                                 &control, &ordering);
+            auto searchMove = [&](int low, int high) {
+                return -negamax(board, depth - 1, 1, -high, -low, &nodes, &qNodes, tt, nullptr,
+                                &control, &ordering);
+            };
+
+            // Principal variation search, as in negamax
+            int score = 0;
+
+            if (i == 0) {
+                score = searchMove(alpha, beta);
+            } else {
+                score = searchMove(alpha, alpha + 1);
+
+                if (score > alpha && score < beta && !control.stopped) {
+                    score = searchMove(alpha, beta);
+                }
+            }
 
             board.unmakeMove(move, undo);
 
