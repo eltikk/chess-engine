@@ -571,7 +571,7 @@ TEST_CASE("Repetition draws are not stored in the transposition table") {
     EXPECT_EQ(plainScore, tableScore);
 }
 
-TEST_CASE("Transposition table is bypassed near the fifty-move limit") {
+TEST_CASE("Scores searched with a lower clock are not reused near the fifty-move limit") {
     Board board;
     board.loadFEN("7k/8/8/8/8/8/1Q6/K7 w - - 99 80");
 
@@ -588,17 +588,21 @@ TEST_CASE("Transposition table is bypassed near the fifty-move limit") {
     EXPECT_EQ(777, Search::negamax(lowClock, 2, 0, -infinity, infinity, nullptr, nullptr, &tt));
 }
 
-TEST_CASE("Fifty-move draws are not stored in the transposition table") {
+TEST_CASE("Fifty-move draws in the transposition table are not reused at another clock") {
     Board board;
     board.loadFEN("7k/8/8/8/8/8/1Q6/K7 w - - 99 80");
 
     TranspositionTable tt(1);
     EXPECT_EQ(0, Search::negamax(board, 2, 0, -infinity, infinity, nullptr, nullptr, &tt));
 
+    // The draw is stored for clock 99 only
     int score = 0;
     Move move{};
 
-    EXPECT_FALSE(tt.probe(board.getHash(), 0, -infinity, infinity, 0, score, move));
+    EXPECT_FALSE(tt.probe(board.getHash(), 0, -infinity, infinity, 0, score, move, 0));
+    EXPECT_FALSE(tt.probe(board.getHash(), 0, -infinity, infinity, 0, score, move, 98));
+    EXPECT_TRUE(tt.probe(board.getHash(), 0, -infinity, infinity, 0, score, move, 99));
+    EXPECT_EQ(0, score);
 
     // The same position with a fresh clock is searched normally
     Board lowClock;

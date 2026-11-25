@@ -707,4 +707,29 @@ assert "score cp 0 " in output[-2]
 
 assert session.quit() == []
 
+# Test 30: A table filled at a low halfmove clock reports no mate that the fifty-move rule prevents
+session = Engine()
+
+# Black is mated in three moves by king and rook, none of them a capture or pawn move
+session.send("position fen k7/8/2K5/8/8/8/8/1R6 b - - 0 1")
+output = session.search("go depth 8")
+assert "score mate -3 " in output[-2]
+
+# From clock 95 the fifty-move rule ends the game before the mate
+session.send("position fen k7/8/2K5/8/8/8/8/1R6 b - - 95 1")
+output = session.search("go depth 4")
+assert not any("score mate" in line for line in output if line.startswith("info")), output
+
+# From clock 94 the mate lands on the hundredth halfmove and takes precedence
+session.send("position fen k7/8/2K5/8/8/8/8/1R6 b - - 94 1")
+output = session.search("go depth 6")
+assert "score mate -3 " in output[-2]
+
+# The same position reached through moves, with the clock counted from the game
+session.send("position fen k7/8/2K5/8/8/8/8/1R6 b - - 91 1 moves a8a7 c6c7 a7a8 c7c6")
+output = session.search("go depth 4")
+assert not any("score mate" in line for line in output if line.startswith("info")), output
+
+assert session.quit() == []
+
 print("All UCI integration tests passed!")

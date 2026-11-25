@@ -125,7 +125,9 @@ void storeKiller(std::array<Move, 2>& killers, const Move& move) {
     }
 }
 
-// No repetition draw was relied on
+static_assert(TranspositionTable::fiftyMoveLimit == Board::fiftyMoveLimit);
+
+// No draw was relied on
 constexpr int noHistoryPly = std::numeric_limits<int>::max();
 
 // Draws that can be scored before generating moves, since these positions are never checkmate.
@@ -145,8 +147,20 @@ bool isDrawnPosition(const Board& board, int ply, int* historyPly) {
     return board.isInsufficientMaterial();
 }
 
-// Checkmate takes precedence, so this is only tested once the side to move has a legal move
-bool isFiftyMoveDraw(const Board& board, int ply) { return ply > 0 && board.isFiftyMoveRule(); }
+// Checkmate takes precedence, so this is only tested once the side to move has a legal move.
+// The clock is not hashed, so the draw relies on every position since the last capture or pawn
+// move, which may precede the root.
+bool isFiftyMoveDraw(const Board& board, int ply, int* clockPly) {
+    if (ply == 0 || !board.isFiftyMoveRule()) {
+        return false;
+    }
+
+    if (clockPly != nullptr) {
+        *clockPly = std::min(*clockPly, ply - board.getHalfmoveClock());
+    }
+
+    return true;
+}
 
 bool checkStop(Search::Control& control) {
     if (!control.stopped) {
@@ -178,7 +192,7 @@ bool shouldStop(Search::Control* control) {
 bool wasStopped(const Search::Control* control) { return control != nullptr && control->stopped; }
 
 int quiescence(Board& board, int alpha, int beta, int ply, std::uint64_t* qNodes, int* historyPly,
-               Search::Control* control) {
+               Search::Control* control, int* clockPly) {
     if (shouldStop(control)) {
         return 0;
     }
@@ -206,7 +220,7 @@ int quiescence(Board& board, int alpha, int beta, int ply, std::uint64_t* qNodes
         return 0;
     }
 
-    if (isFiftyMoveDraw(board, ply)) {
+    if (isFiftyMoveDraw(board, ply, clockPly)) {
         return 0;
     }
 
@@ -276,7 +290,8 @@ int quiescence(Board& board, int alpha, int beta, int ply, std::uint64_t* qNodes
 
         board.makeMove(move, undo);
 
-        int score = -quiescence(board, -beta, -alpha, ply + 1, qNodes, historyPly, control);
+        int score =
+            -quiescence(board, -beta, -alpha, ply + 1, qNodes, historyPly, control, clockPly);
 
         board.unmakeMove(move, undo);
 
@@ -311,11 +326,11 @@ void Search::MoveOrdering::updateHistory(bool whiteToMove, const Move& move, int
 
 int Search::negamax(Board& board, int depth, int ply, int alpha, int beta, std::uint64_t* nodes,
                     std::uint64_t* qNodes, TranspositionTable* tt, int* historyPly,
-                    Control* control, MoveOrdering* ordering) {
+                    Control* control, MoveOrdering* ordering, int* clockPly) {
 
     // Leaf nodes are counted in qNodes by quiescence, so check depth before counting here.
     if (depth <= 0) {
-        return quiescence(board, alpha, beta, ply, qNodes, historyPly, control);
+        return quiescence(board, alpha, beta, ply, qNodes, historyPly, control, clockPly);
     }
 
     if (shouldStop(control)) {
@@ -330,21 +345,27 @@ int Search::negamax(Board& board, int depth, int ply, int alpha, int beta, std::
 
     // The hash encodes neither the moves that led here nor the halfmove clock. Repetition depends
     // on those moves, so it is tested before the table probe, together with insufficient material,
-    // which depends only on the position. Subtrees that may reach the fifty-move limit neither read
-    // nor write table scores.
+    // which depends only on the position. The table decides from the clock which scores still
+    // hold here; the stored move is used for ordering regardless.
     if (isDrawnPosition(board, ply, historyPly)) {
         return 0;
     }
 
-    const bool useTable = tt != nullptr && board.getHalfmoveClock() + depth < Board::fiftyMoveLimit;
-
     const int originalAlpha = alpha;
     Move ttMove{};
 
-    if (useTable) {
+    if (tt != nullptr) {
         int ttScore = 0;
+        bool clockDependent = false;
 
-        if (tt->probe(board.getHash(), depth, alpha, beta, ply, ttScore, ttMove)) {
+        if (tt->probe(board.getHash(), depth, alpha, beta, ply, ttScore, ttMove,
+                      board.getHalfmoveClock(), &clockDependent)) {
+            // A score that holds only at this clock relies on every position since the last
+            // capture or pawn move, just as the fifty-move draw it was searched with did
+            if (clockDependent && clockPly != nullptr) {
+                *clockPly = std::min(*clockPly, ply - board.getHalfmoveClock());
+            }
+
             return ttScore;
         }
     }
@@ -359,7 +380,7 @@ int Search::negamax(Board& board, int depth, int ply, int alpha, int beta, std::
         return 0;
     }
 
-    if (isFiftyMoveDraw(board, ply)) {
+    if (isFiftyMoveDraw(board, ply, clockPly)) {
         return 0;
     }
 
@@ -382,13 +403,14 @@ int Search::negamax(Board& board, int depth, int ply, int alpha, int beta, std::
     int bestScore = std::numeric_limits<int>::min();
     Move bestMove = moves.moves[0];
 
-    // Earliest occurrence relied on by repetition draws below this node
+    // Earliest positions relied on by repetition and fifty-move draws below this node
     int subtreeHistoryPly = noHistoryPly;
+    int subtreeClockPly = noHistoryPly;
 
     // Searches the move just made with the window (low, high), from this node's point of view
-    auto searchMove = [&](int low, int high, int* moveHistoryPly) {
+    auto searchMove = [&](int low, int high, int* moveHistoryPly, int* moveClockPly) {
         return -negamax(board, depth - 1, ply + 1, -high, -low, nodes, qNodes, tt, moveHistoryPly,
-                        control, ordering);
+                        control, ordering, moveClockPly);
     };
 
     for (int i = 0; i < moves.count; ++i) {
@@ -397,21 +419,23 @@ int Search::negamax(Board& board, int depth, int ply, int alpha, int beta, std::
 
         board.makeMove(move, undo);
 
-        // Repetitions relied on by the search whose score is kept
+        // Draws relied on by the search whose score is kept
         int moveHistoryPly = noHistoryPly;
+        int moveClockPly = noHistoryPly;
         int score = 0;
 
         // Principal variation search: the first move gets the full window. Later moves only need
         // to be shown no better than alpha, which a null window does more cheaply; a move that
         // beats alpha without reaching beta is searched again with the full window for its score.
         if (i == 0) {
-            score = searchMove(alpha, beta, &moveHistoryPly);
+            score = searchMove(alpha, beta, &moveHistoryPly, &moveClockPly);
         } else {
-            score = searchMove(alpha, alpha + 1, &moveHistoryPly);
+            score = searchMove(alpha, alpha + 1, &moveHistoryPly, &moveClockPly);
 
             if (score > alpha && score < beta && !wasStopped(control)) {
                 moveHistoryPly = noHistoryPly;
-                score = searchMove(alpha, beta, &moveHistoryPly);
+                moveClockPly = noHistoryPly;
+                score = searchMove(alpha, beta, &moveHistoryPly, &moveClockPly);
             }
         }
 
@@ -422,6 +446,7 @@ int Search::negamax(Board& board, int depth, int ply, int alpha, int beta, std::
         }
 
         subtreeHistoryPly = std::min(subtreeHistoryPly, moveHistoryPly);
+        subtreeClockPly = std::min(subtreeClockPly, moveClockPly);
 
         if (score > bestScore) {
             bestScore = score;
@@ -449,9 +474,15 @@ int Search::negamax(Board& board, int depth, int ply, int alpha, int beta, std::
         *historyPly = std::min(*historyPly, subtreeHistoryPly);
     }
 
+    if (clockPly != nullptr) {
+        *clockPly = std::min(*clockPly, subtreeClockPly);
+    }
+
     // Store only scores whose repetitions lie entirely below this node; those hold along any path
-    // here. Repeating this position or one above it depends on how it was reached.
-    if (useTable && subtreeHistoryPly > ply) {
+    // here. Repeating this position or one above it depends on how it was reached. A fifty-move
+    // draw counted from a capture or pawn move at or above this node depends on its clock, so
+    // such a score is stored for that clock only.
+    if (tt != nullptr && subtreeHistoryPly > ply) {
         TranspositionTable::Bound bound = TranspositionTable::Bound::Exact;
 
         if (bestScore <= originalAlpha) {
@@ -460,7 +491,10 @@ int Search::negamax(Board& board, int depth, int ply, int alpha, int beta, std::
             bound = TranspositionTable::Bound::Lower;
         }
 
-        tt->store(board.getHash(), depth, bestScore, bound, bestMove, ply);
+        const int clock =
+            subtreeClockPly <= ply ? board.getHalfmoveClock() : TranspositionTable::noClock;
+
+        tt->store(board.getHash(), depth, bestScore, bound, bestMove, ply, clock);
     }
 
     return bestScore;

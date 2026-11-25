@@ -1,5 +1,6 @@
 #include "TranspositionTable.h"
 #include <algorithm>
+#include <cstdlib>
 
 namespace {
 
@@ -62,7 +63,8 @@ void TranspositionTable::clear() {
 }
 
 bool TranspositionTable::probe(std::uint64_t key, int depth, int alpha, int beta, int ply,
-                               int& score, Move& bestMove) {
+                               int& score, Move& bestMove, int halfmoveClock,
+                               bool* clockDependent) {
     const Entry& entry = entries[key & (entries.size() - 1)];
 
     if (!entry.valid || entry.key != key) {
@@ -76,12 +78,32 @@ bool TranspositionTable::probe(std::uint64_t key, int depth, int alpha, int beta
         return false;
     }
 
+    if (entry.halfmoveClock != anyClock && entry.halfmoveClock != halfmoveClock) {
+        return false;
+    }
+
+    const int pliesToDraw = fiftyMoveLimit - halfmoveClock;
+
+    // Stored mate scores count plies from this position rather than from the root
+    if (std::abs(entry.score) >= mateThreshold) {
+        if (mateScore - std::abs(entry.score) > pliesToDraw) {
+            return false;
+        }
+    } else if (depth >= pliesToDraw) {
+        return false;
+    }
+
     const int storedScore = scoreFromTable(entry.score, ply);
 
     if (entry.bound == Bound::Exact || (entry.bound == Bound::Lower && storedScore >= beta) ||
         (entry.bound == Bound::Upper && storedScore <= alpha)) {
         ++cutoffs;
         score = storedScore;
+
+        if (clockDependent != nullptr) {
+            *clockDependent = entry.halfmoveClock != anyClock;
+        }
+
         return true;
     }
 
@@ -89,7 +111,7 @@ bool TranspositionTable::probe(std::uint64_t key, int depth, int alpha, int beta
 }
 
 void TranspositionTable::store(std::uint64_t key, int depth, int score, Bound bound,
-                               const Move& bestMove, int ply) {
+                               const Move& bestMove, int ply, int halfmoveClock) {
     Entry& entry = entries[key & (entries.size() - 1)];
 
     // Different positions always replace; the same position keeps its deeper result.
@@ -97,5 +119,16 @@ void TranspositionTable::store(std::uint64_t key, int depth, int score, Bound bo
         return;
     }
 
-    entry = Entry{key, scoreToTable(score, ply), bestMove, depth, bound, true};
+    std::uint8_t clock = anyClock;
+
+    if (halfmoveClock != noClock) {
+        // The entry cannot hold this clock, and anyClock would make the score hold at every clock
+        if (halfmoveClock < 0 || halfmoveClock >= anyClock) {
+            return;
+        }
+
+        clock = static_cast<std::uint8_t>(halfmoveClock);
+    }
+
+    entry = Entry{key, scoreToTable(score, ply), bestMove, depth, bound, true, clock};
 }

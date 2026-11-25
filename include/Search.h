@@ -19,7 +19,9 @@ class Search {
         std::uint64_t nodes;
         std::uint64_t timeMs;
         std::uint64_t nps;
+        // Table probes that found the position, whether or not its score was usable
         std::uint64_t ttHits;
+        // Table probes whose stored score was returned without searching
         std::uint64_t ttCutoffs;
     };
 
@@ -65,12 +67,14 @@ class Search {
     };
 
     // If given, historyPly is lowered to the ply of the earliest position a repetition draw in this
-    // search relied on (negative for positions before the root).
+    // search relied on (negative for positions before the root), and clockPly to the ply of the
+    // earliest position whose halfmove clock a fifty-move draw in this search relied on: the
+    // position after the last capture or pawn move before that draw.
     static int negamax(Board& board, int depth, int ply = 0, int alpha = -1000000,
                        int beta = 1000000, std::uint64_t* nodes = nullptr,
                        std::uint64_t* qNodes = nullptr, TranspositionTable* tt = nullptr,
                        int* historyPly = nullptr, Control* control = nullptr,
-                       MoveOrdering* ordering = nullptr);
+                       MoveOrdering* ordering = nullptr, int* clockPly = nullptr);
     static std::optional<Move> findBestMove(Board& board, int maxDepth,
                                             const IterationCallback& onIteration = {});
     // Returns the best move of the last completed iteration, or a legal fallback move if none
