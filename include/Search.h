@@ -24,6 +24,9 @@ class Search {
         std::uint64_t ttHits;
         // Table probes whose stored score was returned without searching
         std::uint64_t ttCutoffs;
+        // Null move searches, and those that failed high and pruned their node
+        std::uint64_t nullMoveTries = 0;
+        std::uint64_t nullMoveCutoffs = 0;
         // Whether the iteration started from an aspiration window
         bool aspiration = false;
         // Re-searches after the window failed high or low
@@ -52,11 +55,17 @@ class Search {
     // Half-width of the first aspiration window; the margin doubles on each fail
     static constexpr int aspirationWindow = 25;
 
+    // Null move searches are this many plies shallower than a normal move's search, and only nodes
+    // with at least nullMoveMinDepth plies left try one
+    static constexpr int nullMoveReduction = 2;
+    static constexpr int nullMoveMinDepth = 3;
+
     // No new iteration starts after the soft deadline; the hard deadline interrupts one in progress
     struct Limits {
         int depth = maxSearchDepth;
         Clock::time_point softDeadline = Clock::time_point::max();
         Clock::time_point hardDeadline = Clock::time_point::max();
+        bool nullMovePruning = true;
     };
 
     // Once stopped is set, every search function returns at once and its score must be ignored
@@ -65,6 +74,11 @@ class Search {
         Clock::time_point hardDeadline = Clock::time_point::max();
         std::uint64_t checkCounter = 0;
         bool stopped = false;
+
+        // Null move pruning makes scores inexact, so searches only use it when enabled here
+        bool nullMovePruning = false;
+        std::uint64_t nullMoveTries = 0;
+        std::uint64_t nullMoveCutoffs = 0;
     };
 
     // Quiet moves that caused a beta cutoff, two per ply, the most recent first
@@ -89,12 +103,14 @@ class Search {
     // If given, historyPly is lowered to the ply of the earliest position a repetition draw in this
     // search relied on (negative for positions before the root), and clockPly to the ply of the
     // earliest position whose halfmove clock a fifty-move draw in this search relied on: the
-    // position after the last capture or pawn move before that draw.
+    // position after the last capture or pawn move before that draw. afterNullMove marks the
+    // reply to a null move, which may not pass again.
     static int negamax(Board& board, int depth, int ply = 0, int alpha = -1000000,
                        int beta = 1000000, std::uint64_t* nodes = nullptr,
                        std::uint64_t* qNodes = nullptr, TranspositionTable* tt = nullptr,
                        int* historyPly = nullptr, Control* control = nullptr,
-                       MoveOrdering* ordering = nullptr, int* clockPly = nullptr);
+                       MoveOrdering* ordering = nullptr, int* clockPly = nullptr,
+                       bool afterNullMove = false);
     // Searches the root moves to the given depth, starting from a window of guess +/-
     // aspirationWindow and widening the failing side until the score falls inside it. Without a
     // guess, or with one near mate scores, the window is full. Leaves the best move first in moves.

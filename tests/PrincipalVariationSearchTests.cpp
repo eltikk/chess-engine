@@ -154,6 +154,14 @@ int exactScore(Board& board, int depth) {
     return fullWindowAlphaBeta(board, depth, 0, -infinity, infinity);
 }
 
+// Iterative deepening without null move pruning, whose scores are exact
+Search::Limits exactLimits(int depth) {
+    Search::Limits limits;
+    limits.depth = depth;
+    limits.nullMovePruning = false;
+    return limits;
+}
+
 // A fail-soft result outside the window is a bound on the exact score; inside it, the exact score
 bool consistentWithExact(int result, int alpha, int beta, int exact) {
     if (result <= alpha) {
@@ -358,9 +366,9 @@ TEST_CASE("PVS keeps mate scores and mate distances") {
         board.loadFEN(mate.fen);
 
         int finalScore = 0;
-        Search::findBestMove(board, mate.depth, [&finalScore](const Search::IterationInfo& info) {
-            finalScore = info.score;
-        });
+        Search::findBestMove(
+            board, exactLimits(mate.depth), nullptr,
+            [&finalScore](const Search::IterationInfo& info) { finalScore = info.score; });
 
         EXPECT_EQ(mate.expected, finalScore);
     }
@@ -389,7 +397,7 @@ TEST_CASE("PVS at the root reports exact scores when a later root move becomes b
 
         std::vector<Search::IterationInfo> iterations;
         const auto bestMove = Search::findBestMove(
-            board, root.depth,
+            board, exactLimits(root.depth), nullptr,
             [&iterations](const Search::IterationInfo& info) { iterations.push_back(info); });
 
         EXPECT_EQ(static_cast<std::size_t>(root.depth), iterations.size());

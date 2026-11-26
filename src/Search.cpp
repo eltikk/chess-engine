@@ -1,8 +1,10 @@
 #include "Search.h"
+#include "BitUtils.h"
 #include "Evaluation.h"
 #include "MoveGenerator.h"
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <limits>
 #include <string>
 #include <utility>
@@ -192,6 +194,52 @@ bool shouldStop(Search::Control* control) {
 
 bool wasStopped(const Search::Control* control) { return control != nullptr && control->stopped; }
 
+// Knights, bishops, rooks and queens of the side to move
+int pieceCount(const Board& board) {
+    const bool white = board.isWhiteToMove();
+
+    return BitUtils::popcount(board.getPieceBitboard(white ? WHITE_KNIGHT : BLACK_KNIGHT) |
+                              board.getPieceBitboard(white ? WHITE_BISHOP : BLACK_BISHOP) |
+                              board.getPieceBitboard(white ? WHITE_ROOK : BLACK_ROOK) |
+                              board.getPieceBitboard(white ? WHITE_QUEEN : BLACK_QUEEN));
+}
+
+// Null move pruning assumes passing is worse than any move. The node must have legal moves, since a
+// pass would hide a stalemate.
+bool canTryNullMove(const Board& board, int depth, int alpha, int beta, bool afterNullMove,
+                    const Search::Control* control) {
+    constexpr int mateScore = 100000;
+    constexpr int mateThreshold = mateScore - 1000;
+
+    if (control == nullptr || !control->nullMovePruning || afterNullMove ||
+        depth < Search::nullMoveMinDepth) {
+        return false;
+    }
+
+    // PV nodes need exact scores, and passing cannot prove a mate
+    if (beta - alpha > 1 || std::abs(beta) >= mateThreshold) {
+        return false;
+    }
+
+    // The null move restarts the halfmove clock, so its search would miss fifty-move draws that
+    // this node's search can reach
+    if (board.getHalfmoveClock() + depth >= Board::fiftyMoveLimit) {
+        return false;
+    }
+
+    // A pass is illegal in check. Zugzwang, where it would beat every move, is common when the side
+    // to move has at most one piece, whose spare moves run out, as with a pinned rook in a rook
+    // ending.
+    if (pieceCount(board) < 2 || MoveGenerator::isKingInCheck(board, board.isWhiteToMove())) {
+        return false;
+    }
+
+    // From below beta a null move rarely fails high, so it is not worth its search
+    const int staticEval = Evaluation::evaluate(board);
+
+    return (board.isWhiteToMove() ? staticEval : -staticEval) >= beta;
+}
+
 int quiescence(Board& board, int alpha, int beta, int ply, std::uint64_t* qNodes, int* historyPly,
                Search::Control* control, int* clockPly) {
     if (shouldStop(control)) {
@@ -327,7 +375,7 @@ void Search::MoveOrdering::updateHistory(bool whiteToMove, const Move& move, int
 
 int Search::negamax(Board& board, int depth, int ply, int alpha, int beta, std::uint64_t* nodes,
                     std::uint64_t* qNodes, TranspositionTable* tt, int* historyPly,
-                    Control* control, MoveOrdering* ordering, int* clockPly) {
+                    Control* control, MoveOrdering* ordering, int* clockPly, bool afterNullMove) {
 
     // Leaf nodes are counted in qNodes by quiescence, so check depth before counting here.
     if (depth <= 0) {
@@ -343,6 +391,7 @@ int Search::negamax(Board& board, int depth, int ply, int alpha, int beta, std::
     }
 
     constexpr int mateScore = 100000;
+    constexpr int mateThreshold = mateScore - 1000;
 
     // The hash encodes neither the moves that led here nor the halfmove clock. Repetition depends
     // on those moves, so it is tested before the table probe, together with insufficient material,
@@ -383,6 +432,34 @@ int Search::negamax(Board& board, int depth, int ply, int alpha, int beta, std::
 
     if (isFiftyMoveDraw(board, ply, clockPly)) {
         return 0;
+    }
+
+    if (canTryNullMove(board, depth, alpha, beta, afterNullMove, control)) {
+        ++control->nullMoveTries;
+
+        UndoState undo;
+        board.makeNullMove(undo);
+
+        // The null move restarts the halfmove clock, so no draw in its search relies on a position
+        // at or above this node, and there is nothing to report to the callers
+        const int nullScore =
+            -negamax(board, depth - 1 - nullMoveReduction, ply + 1, -beta, -beta + 1, nodes, qNodes,
+                     tt, nullptr, control, ordering, nullptr, true);
+
+        board.unmakeNullMove(undo);
+
+        if (wasStopped(control)) {
+            return 0;
+        }
+
+        // The cutoff is not stored in the table: it is a guess, not the result of a search of
+        // this node's moves
+        if (nullScore >= beta) {
+            ++control->nullMoveCutoffs;
+
+            // A mate found after passing is unproven, and its distance counts the pass
+            return nullScore >= mateThreshold ? beta : nullScore;
+        }
     }
 
     orderMoves(board, moves, ordering != nullptr ? &ordering->history : nullptr);
@@ -677,6 +754,7 @@ std::optional<Move> Search::findBestMove(Board& board, const Limits& limits,
     Control control;
     control.stopRequested = stopRequested;
     control.hardDeadline = limits.hardDeadline;
+    control.nullMovePruning = limits.nullMovePruning;
 
     const auto startTime = Clock::now();
 
@@ -718,10 +796,10 @@ std::optional<Move> Search::findBestMove(Board& board, const Limits& limits,
         const std::uint64_t nps = elapsedUs > 0 ? totalNodes * 1000000ULL / elapsedUs : 0;
 
         if (bestMove.has_value() && onIteration) {
-            onIteration(IterationInfo{depth, *bestMove, root->score, totalNodes, timeMs, nps,
-                                      tt->getHits() - initialHits,
-                                      tt->getCutoffs() - initialCutoffs, root->aspiration,
-                                      root->failHighs, root->failLows});
+            onIteration(IterationInfo{
+                depth, *bestMove, root->score, totalNodes, timeMs, nps, tt->getHits() - initialHits,
+                tt->getCutoffs() - initialCutoffs, control.nullMoveTries, control.nullMoveCutoffs,
+                root->aspiration, root->failHighs, root->failLows});
         }
     }
 

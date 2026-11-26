@@ -334,6 +334,40 @@ void Board::unmakeMove(const Move& move, const UndoState& undo) {
     updateOccupancy();
 }
 
+void Board::makeNullMove(UndoState& undo) {
+    undo.enPassantSquare = enPassantSquare;
+    undo.halfmoveClock = halfmoveClock;
+    undo.fullmoveCounter = fullmoveCounter;
+    undo.whiteToMove = whiteToMove;
+    undo.hash = hash;
+    undo.enPassantKey = enPassantKey;
+
+    history.push_back(hash);
+
+    hash ^= enPassantKey ^ Zobrist::sideToMoveKey();
+
+    enPassantSquare = -1;
+    enPassantKey = 0;
+    halfmoveClock = 0;
+
+    if (!whiteToMove) {
+        fullmoveCounter++;
+    }
+
+    whiteToMove = !whiteToMove;
+}
+
+void Board::unmakeNullMove(const UndoState& undo) {
+    whiteToMove = undo.whiteToMove;
+    enPassantSquare = undo.enPassantSquare;
+    halfmoveClock = undo.halfmoveClock;
+    fullmoveCounter = undo.fullmoveCounter;
+    hash = undo.hash;
+    enPassantKey = undo.enPassantKey;
+
+    history.pop_back();
+}
+
 int Board::repetitionDistance(int searchPly) const {
     const int size = static_cast<int>(history.size());
 

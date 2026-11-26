@@ -51,6 +51,11 @@ public:
     void makeMove(const Move& move, UndoState& undo);
     void unmakeMove(const Move& move, const UndoState& undo);
 
+    // Passes the turn, for null move pruning. The halfmove clock restarts, so repetition detection
+    // and the fifty-move rule never reach back past a move that was not actually played.
+    void makeNullMove(UndoState& undo);
+    void unmakeNullMove(const UndoState& undo);
+
     static constexpr int fiftyMoveLimit = 100;
 
     // Threefold repetition. During search, pass the current ply: a single earlier occurrence after
