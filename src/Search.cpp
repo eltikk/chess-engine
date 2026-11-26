@@ -5,6 +5,7 @@
 #include <chrono>
 #include <limits>
 #include <string>
+#include <utility>
 
 namespace {
 
@@ -500,6 +501,132 @@ int Search::negamax(Board& board, int depth, int ply, int alpha, int beta, std::
     return bestScore;
 }
 
+namespace {
+
+struct WindowResult {
+    int score;
+    int moveIndex;
+};
+
+// Searches the root moves once with the window (alpha, beta), fail-soft like negamax. The root does
+// not read the stop condition itself; the nodes below it read it every stopCheckInterval nodes,
+// which bounds the stop latency and lets a stop primed through Control::checkCounter land on any
+// node.
+WindowResult searchRootWindow(Board& board, const MoveList& moves, int depth, int alpha, int beta,
+                              std::uint64_t* nodes, std::uint64_t* qNodes, TranspositionTable* tt,
+                              Search::Control* control, Search::MoveOrdering* ordering) {
+    if (nodes != nullptr) {
+        ++(*nodes); // Count the root
+    }
+
+    WindowResult result{std::numeric_limits<int>::min(), 0};
+
+    for (int i = 0; i < moves.count; ++i) {
+        const Move& move = moves.moves[i];
+
+        UndoState undo;
+        board.makeMove(move, undo);
+
+        auto searchMove = [&](int low, int high) {
+            return -Search::negamax(board, depth - 1, 1, -high, -low, nodes, qNodes, tt, nullptr,
+                                    control, ordering);
+        };
+
+        // Principal variation search, as in negamax
+        int score = 0;
+
+        if (i == 0) {
+            score = searchMove(alpha, beta);
+        } else {
+            score = searchMove(alpha, alpha + 1);
+
+            if (score > alpha && score < beta && !wasStopped(control)) {
+                score = searchMove(alpha, beta);
+            }
+        }
+
+        board.unmakeMove(move, undo);
+
+        if (wasStopped(control)) {
+            break;
+        }
+
+        if (score > result.score) {
+            result = WindowResult{score, i};
+        }
+
+        if (score > alpha) {
+            alpha = score;
+        }
+
+        if (alpha >= beta) {
+            break;
+        }
+    }
+
+    return result;
+}
+
+} // namespace
+
+std::optional<Search::RootResult> Search::searchRoot(Board& board, MoveList& moves, int depth,
+                                                     std::optional<int> guess, std::uint64_t* nodes,
+                                                     std::uint64_t* qNodes, TranspositionTable* tt,
+                                                     Control* control, MoveOrdering* ordering) {
+    constexpr int infinity = 1000000;
+    constexpr int mateScore = 100000;
+    constexpr int mateThreshold = mateScore - 1000;
+
+    if (moves.count == 0) {
+        return std::nullopt;
+    }
+
+    RootResult result{};
+    int delta = aspirationWindow;
+    int alpha = -infinity;
+    int beta = infinity;
+
+    // Narrow bounds stay strictly between the mate scores, so a mate score is only ever found
+    // with that side of the window fully open
+    if (guess.has_value() && *guess > delta - mateThreshold && *guess < mateThreshold - delta) {
+        alpha = *guess - delta;
+        beta = *guess + delta;
+        result.aspiration = true;
+    }
+
+    while (true) {
+        const WindowResult window = searchRootWindow(board, moves, depth, alpha, beta, nodes,
+                                                     qNodes, tt, control, ordering);
+
+        // Not even a bound is reported, so the last completed iteration stands
+        if (wasStopped(control)) {
+            return std::nullopt;
+        }
+
+        // Each fail moves one bound past the failed score by a doubling margin, so the window
+        // becomes full after a bounded number of searches
+        delta = std::min(delta * 2, infinity);
+
+        if (window.score <= alpha) {
+            ++result.failLows;
+            alpha = window.score - delta > -mateThreshold ? window.score - delta : -infinity;
+        } else if (window.score >= beta) {
+            ++result.failHighs;
+            beta = window.score + delta < mateThreshold ? window.score + delta : infinity;
+
+            // Search the move that failed high first
+            std::swap(moves.moves[0], moves.moves[window.moveIndex]);
+        } else {
+            // Search the best move first in the next iteration
+            std::swap(moves.moves[0], moves.moves[window.moveIndex]);
+
+            result.bestMove = moves.moves[0];
+            result.score = window.score;
+            return result;
+        }
+    }
+}
+
 std::optional<Move> Search::findBestMove(Board& board, int maxDepth,
                                          const IterationCallback& onIteration) {
     if (maxDepth <= 0) {
@@ -525,13 +652,12 @@ std::optional<Move> Search::findBestMove(Board& board, const Limits& limits,
 
     orderMoves(board, moves);
 
-    constexpr int infinity = 1000000;
-
     // Played if the search is stopped before its first iteration completes
     const Move fallbackMove = moves.moves[0];
 
-    // Best move of the last completed iteration
+    // Best move and score of the last completed iteration
     std::optional<Move> bestMove;
+    std::optional<int> previousScore;
 
     std::uint64_t totalNodes = 0;
 
@@ -565,75 +691,22 @@ std::optional<Move> Search::findBestMove(Board& board, const Limits& limits,
             break;
         }
 
-        std::uint64_t nodes = 1; // Count the root
+        std::uint64_t nodes = 0;
         std::uint64_t qNodes = 0;
 
-        // Search the previous iteration's best move first
-        if (bestMove.has_value()) {
-            for (int i = 0; i < moves.count; ++i) {
-                if (moves.moves[i].toUCI() == bestMove->toUCI()) {
-                    std::swap(moves.moves[0], moves.moves[i]);
-                    break;
-                }
-            }
-        }
+        // Early scores change too much between depths for a narrow window to pay off
+        const std::optional<int> guess = depth >= aspirationMinDepth ? previousScore : std::nullopt;
 
-        int alpha = -infinity;
-        int beta = infinity;
-        int bestScore = -infinity;
-
-        std::optional<Move> iterationBestMove;
-
-        for (int i = 0; i < moves.count; ++i) {
-            if (checkStop(control)) {
-                break;
-            }
-
-            const Move& move = moves.moves[i];
-
-            UndoState undo;
-            board.makeMove(move, undo);
-
-            auto searchMove = [&](int low, int high) {
-                return -negamax(board, depth - 1, 1, -high, -low, &nodes, &qNodes, tt, nullptr,
-                                &control, &ordering);
-            };
-
-            // Principal variation search, as in negamax
-            int score = 0;
-
-            if (i == 0) {
-                score = searchMove(alpha, beta);
-            } else {
-                score = searchMove(alpha, alpha + 1);
-
-                if (score > alpha && score < beta && !control.stopped) {
-                    score = searchMove(alpha, beta);
-                }
-            }
-
-            board.unmakeMove(move, undo);
-
-            if (control.stopped) {
-                break;
-            }
-
-            if (score > bestScore) {
-                bestScore = score;
-                iterationBestMove = move;
-            }
-
-            if (score > alpha) {
-                alpha = score;
-            }
-        }
+        const std::optional<RootResult> root =
+            searchRoot(board, moves, depth, guess, &nodes, &qNodes, tt, &control, &ordering);
 
         // An interrupted iteration may not have searched its best move, so it is discarded
-        if (control.stopped) {
+        if (!root.has_value()) {
             break;
         }
 
-        bestMove = iterationBestMove;
+        bestMove = root->bestMove;
+        previousScore = root->score;
 
         totalNodes += nodes + qNodes;
 
@@ -645,9 +718,10 @@ std::optional<Move> Search::findBestMove(Board& board, const Limits& limits,
         const std::uint64_t nps = elapsedUs > 0 ? totalNodes * 1000000ULL / elapsedUs : 0;
 
         if (bestMove.has_value() && onIteration) {
-            onIteration(IterationInfo{depth, *bestMove, bestScore, totalNodes, timeMs, nps,
+            onIteration(IterationInfo{depth, *bestMove, root->score, totalNodes, timeMs, nps,
                                       tt->getHits() - initialHits,
-                                      tt->getCutoffs() - initialCutoffs});
+                                      tt->getCutoffs() - initialCutoffs, root->aspiration,
+                                      root->failHighs, root->failLows});
         }
     }
 

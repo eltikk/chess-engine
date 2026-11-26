@@ -2,6 +2,7 @@
 
 #include "Board.h"
 #include "Move.h"
+#include "MoveList.h"
 #include "TranspositionTable.h"
 #include <array>
 #include <atomic>
@@ -23,6 +24,20 @@ class Search {
         std::uint64_t ttHits;
         // Table probes whose stored score was returned without searching
         std::uint64_t ttCutoffs;
+        // Whether the iteration started from an aspiration window
+        bool aspiration = false;
+        // Re-searches after the window failed high or low
+        int failHighs = 0;
+        int failLows = 0;
+    };
+
+    // A completed search of the root moves: the best move and its exact score
+    struct RootResult {
+        Move bestMove;
+        int score;
+        bool aspiration = false;
+        int failHighs = 0;
+        int failLows = 0;
     };
 
     using IterationCallback = std::function<void(const IterationInfo&)>;
@@ -31,6 +46,11 @@ class Search {
     static constexpr int maxSearchDepth = 64;
     static constexpr std::int64_t moveOverheadMs = 30;
     static constexpr std::uint64_t stopCheckInterval = 2048;
+
+    // Iterations from this depth on search an aspiration window around the previous score
+    static constexpr int aspirationMinDepth = 4;
+    // Half-width of the first aspiration window; the margin doubles on each fail
+    static constexpr int aspirationWindow = 25;
 
     // No new iteration starts after the soft deadline; the hard deadline interrupts one in progress
     struct Limits {
@@ -75,6 +95,15 @@ class Search {
                        std::uint64_t* qNodes = nullptr, TranspositionTable* tt = nullptr,
                        int* historyPly = nullptr, Control* control = nullptr,
                        MoveOrdering* ordering = nullptr, int* clockPly = nullptr);
+    // Searches the root moves to the given depth, starting from a window of guess +/-
+    // aspirationWindow and widening the failing side until the score falls inside it. Without a
+    // guess, or with one near mate scores, the window is full. Leaves the best move first in moves.
+    // Returns nothing if moves is empty or the search was stopped, even during a re-search.
+    static std::optional<RootResult>
+    searchRoot(Board& board, MoveList& moves, int depth, std::optional<int> guess,
+               std::uint64_t* nodes = nullptr, std::uint64_t* qNodes = nullptr,
+               TranspositionTable* tt = nullptr, Control* control = nullptr,
+               MoveOrdering* ordering = nullptr);
     static std::optional<Move> findBestMove(Board& board, int maxDepth,
                                             const IterationCallback& onIteration = {});
     // Returns the best move of the last completed iteration, or a legal fallback move if none
