@@ -93,11 +93,13 @@ std::uint64_t triesBelowEval(const char* fen) {
     return rootNullMoveTries(board, beta - 1, beta);
 }
 
+// Without late move reductions, so null move pruning is the only difference from an exact search
 std::vector<Search::IterationInfo> iterate(Board& board, int depth, bool nullMovePruning) {
     std::vector<Search::IterationInfo> iterations;
     Search::Limits limits;
     limits.depth = depth;
     limits.nullMovePruning = nullMovePruning;
+    limits.lateMoveReductions = false;
     Search::findBestMove(board, limits, nullptr, [&iterations](const Search::IterationInfo& info) {
         iterations.push_back(info);
     });

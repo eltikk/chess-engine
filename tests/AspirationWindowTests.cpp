@@ -121,12 +121,14 @@ bool sameIteration(const Search::IterationInfo& a, const Search::IterationInfo& 
            a.failLows == b.failLows;
 }
 
-// Without null move pruning, so scores can be compared with full-window searches
+// Without null move pruning or late move reductions, so scores can be compared with full-window
+// searches
 std::vector<Search::IterationInfo> iterate(Board& board, int depth) {
     std::vector<Search::IterationInfo> iterations;
     Search::Limits limits;
     limits.depth = depth;
     limits.nullMovePruning = false;
+    limits.lateMoveReductions = false;
     Search::findBestMove(board, limits, nullptr, [&iterations](const Search::IterationInfo& info) {
         iterations.push_back(info);
     });
@@ -523,6 +525,7 @@ TEST_CASE("A timed search interrupted in aspiration iterations reports only comp
         limits.depth = depth;
         limits.hardDeadline = Search::Clock::now() + referenceTime * step / 12;
         limits.nullMovePruning = false;
+        limits.lateMoveReductions = false;
 
         std::vector<Search::IterationInfo> iterations;
         const auto bestMove = Search::findBestMove(

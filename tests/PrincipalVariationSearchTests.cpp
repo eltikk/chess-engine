@@ -154,11 +154,12 @@ int exactScore(Board& board, int depth) {
     return fullWindowAlphaBeta(board, depth, 0, -infinity, infinity);
 }
 
-// Iterative deepening without null move pruning, whose scores are exact
+// Iterative deepening without null move pruning or late move reductions, whose scores are exact
 Search::Limits exactLimits(int depth) {
     Search::Limits limits;
     limits.depth = depth;
     limits.nullMovePruning = false;
+    limits.lateMoveReductions = false;
     return limits;
 }
 

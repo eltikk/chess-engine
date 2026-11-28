@@ -3,7 +3,9 @@
 #include "Evaluation.h"
 #include "MoveGenerator.h"
 #include <algorithm>
+#include <array>
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <limits>
 #include <string>
@@ -240,6 +242,22 @@ bool canTryNullMove(const Board& board, int depth, int alpha, int beta, bool aft
     return (board.isWhiteToMove() ? staticEval : -staticEval) >= beta;
 }
 
+// Nodes in check reduce nothing: every evasion answers a threat, and so few moves give their order
+// little meaning
+bool canReduceLateMoves(const Board& board, int depth, const Search::Control* control) {
+    return control != nullptr && control->lateMoveReductions &&
+           depth >= Search::lateMoveReductionMinDepth &&
+           !MoveGenerator::isKingInCheck(board, board.isWhiteToMove());
+}
+
+// Whether the move just made may be searched at reduced depth if it is ordered late. Captures and
+// promotions change the material, checks force the reply and killers have caused cutoffs at this
+// ply, so only the other quiet moves are reduced. The table move is always searched first.
+bool canReduceMove(const Board& board, const Move& move, const std::array<Move, 2>& killers) {
+    return isQuiet(move) && !sameMove(move, killers[0]) && !sameMove(move, killers[1]) &&
+           !MoveGenerator::isKingInCheck(board, board.isWhiteToMove());
+}
+
 int quiescence(Board& board, int alpha, int beta, int ply, std::uint64_t* qNodes, int* historyPly,
                Search::Control* control, int* clockPly) {
     if (shouldStop(control)) {
@@ -362,6 +380,35 @@ int quiescence(Board& board, int alpha, int beta, int ply, std::uint64_t* qNodes
 
 } // namespace
 
+int Search::lateMoveReduction(int depth, int moveNumber, bool pvNode) {
+    constexpr int tableSize = 64;
+
+    // round(ln(depth) * ln(moveNumber) / 3): one ply for most late moves, two from about the
+    // tenth move at depth 8, and at most six at the deepest nodes
+    static const auto table = [] {
+        std::array<std::array<int, tableSize>, tableSize> reductions{};
+
+        for (int d = 1; d < tableSize; ++d) {
+            for (int m = 1; m < tableSize; ++m) {
+                reductions[d][m] = static_cast<int>(0.5 + std::log(d) * std::log(m) / 3.0);
+            }
+        }
+
+        return reductions;
+    }();
+
+    if (depth < lateMoveReductionMinDepth || moveNumber <= lateMoveReductionMinMoves) {
+        return 0;
+    }
+
+    // The reduced search keeps at least one ply before quiescence
+    const int reduction = std::min(
+        table[std::min(depth, tableSize - 1)][std::min(moveNumber, tableSize - 1)], depth - 2);
+
+    // PV nodes decide the score reported for the root, so their moves are reduced one ply less
+    return pvNode ? std::max(reduction - 1, 0) : reduction;
+}
+
 void Search::MoveOrdering::updateHistory(bool whiteToMove, const Move& move, int depth) {
     static_assert(maxSearchDepth * maxSearchDepth <= maxHistory);
 
@@ -466,8 +513,11 @@ int Search::negamax(Board& board, int depth, int ply, int alpha, int beta, std::
 
     const bool useKillers = ordering != nullptr && ply < maxSearchDepth;
 
+    // Only this node stores killers for its ply, so they stay the same while its moves are searched
+    const std::array<Move, 2> killers = useKillers ? ordering->killers[ply] : std::array<Move, 2>{};
+
     if (useKillers) {
-        orderKillers(moves, ordering->killers[ply]);
+        orderKillers(moves, killers);
     }
 
     // Search the stored best move first, keeping the order of the remaining moves
@@ -485,9 +535,14 @@ int Search::negamax(Board& board, int depth, int ply, int alpha, int beta, std::
     int subtreeHistoryPly = noHistoryPly;
     int subtreeClockPly = noHistoryPly;
 
-    // Searches the move just made with the window (low, high), from this node's point of view
-    auto searchMove = [&](int low, int high, int* moveHistoryPly, int* moveClockPly) {
-        return -negamax(board, depth - 1, ply + 1, -high, -low, nodes, qNodes, tt, moveHistoryPly,
+    // Decided from the window this node was called with, since alpha rises as moves are searched
+    const bool pvNode = beta - alpha > 1;
+    const bool reduceLateMoves = canReduceLateMoves(board, depth, control);
+
+    // Searches the move just made to newDepth with the window (low, high), from this node's point
+    // of view
+    auto searchMove = [&](int newDepth, int low, int high, int* moveHistoryPly, int* moveClockPly) {
+        return -negamax(board, newDepth, ply + 1, -high, -low, nodes, qNodes, tt, moveHistoryPly,
                         control, ordering, moveClockPly);
     };
 
@@ -505,15 +560,35 @@ int Search::negamax(Board& board, int depth, int ply, int alpha, int beta, std::
         // Principal variation search: the first move gets the full window. Later moves only need
         // to be shown no better than alpha, which a null window does more cheaply; a move that
         // beats alpha without reaching beta is searched again with the full window for its score.
+        //
+        // Late move reductions shorten that null window search for quiet moves ordered late. Only
+        // a reduced search that fails low is kept: one that beats alpha is repeated at full depth
+        // before it can raise alpha, cause a cutoff or be searched with the full window.
         if (i == 0) {
-            score = searchMove(alpha, beta, &moveHistoryPly, &moveClockPly);
+            score = searchMove(depth - 1, alpha, beta, &moveHistoryPly, &moveClockPly);
         } else {
-            score = searchMove(alpha, alpha + 1, &moveHistoryPly, &moveClockPly);
+            const int reduction = reduceLateMoves && canReduceMove(board, move, killers)
+                                      ? lateMoveReduction(depth, i + 1, pvNode)
+                                      : 0;
+
+            if (reduction > 0) {
+                ++control->reducedSearches;
+            }
+
+            score =
+                searchMove(depth - 1 - reduction, alpha, alpha + 1, &moveHistoryPly, &moveClockPly);
+
+            if (reduction > 0 && score > alpha && !wasStopped(control)) {
+                ++control->reducedResearches;
+                moveHistoryPly = noHistoryPly;
+                moveClockPly = noHistoryPly;
+                score = searchMove(depth - 1, alpha, alpha + 1, &moveHistoryPly, &moveClockPly);
+            }
 
             if (score > alpha && score < beta && !wasStopped(control)) {
                 moveHistoryPly = noHistoryPly;
                 moveClockPly = noHistoryPly;
-                score = searchMove(alpha, beta, &moveHistoryPly, &moveClockPly);
+                score = searchMove(depth - 1, alpha, beta, &moveHistoryPly, &moveClockPly);
             }
         }
 
@@ -755,6 +830,7 @@ std::optional<Move> Search::findBestMove(Board& board, const Limits& limits,
     control.stopRequested = stopRequested;
     control.hardDeadline = limits.hardDeadline;
     control.nullMovePruning = limits.nullMovePruning;
+    control.lateMoveReductions = limits.lateMoveReductions;
 
     const auto startTime = Clock::now();
 
@@ -799,7 +875,8 @@ std::optional<Move> Search::findBestMove(Board& board, const Limits& limits,
             onIteration(IterationInfo{
                 depth, *bestMove, root->score, totalNodes, timeMs, nps, tt->getHits() - initialHits,
                 tt->getCutoffs() - initialCutoffs, control.nullMoveTries, control.nullMoveCutoffs,
-                root->aspiration, root->failHighs, root->failLows});
+                root->aspiration, root->failHighs, root->failLows, control.reducedSearches,
+                control.reducedResearches});
         }
     }
 

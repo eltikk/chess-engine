@@ -32,6 +32,10 @@ class Search {
         // Re-searches after the window failed high or low
         int failHighs = 0;
         int failLows = 0;
+        // Late move searches made at reduced depth, and those repeated at full depth because they
+        // beat alpha
+        std::uint64_t reducedSearches = 0;
+        std::uint64_t reducedResearches = 0;
     };
 
     // A completed search of the root moves: the best move and its exact score
@@ -60,12 +64,24 @@ class Search {
     static constexpr int nullMoveReduction = 2;
     static constexpr int nullMoveMinDepth = 3;
 
+    // Late move reductions: at nodes with at least lateMoveReductionMinDepth plies left, quiet
+    // moves ordered after the first lateMoveReductionMinMoves are first searched with a null window
+    // at reduced depth, and again at full depth only if they beat alpha
+    static constexpr int lateMoveReductionMinDepth = 3;
+    static constexpr int lateMoveReductionMinMoves = 3;
+
+    // Plies by which a late move's search is reduced at a node with depth plies left, where
+    // moveNumber counts the node's moves from 1. Grows slowly with both, is one ply less at PV
+    // nodes, and always leaves the reduced search at least one ply.
+    static int lateMoveReduction(int depth, int moveNumber, bool pvNode);
+
     // No new iteration starts after the soft deadline; the hard deadline interrupts one in progress
     struct Limits {
         int depth = maxSearchDepth;
         Clock::time_point softDeadline = Clock::time_point::max();
         Clock::time_point hardDeadline = Clock::time_point::max();
         bool nullMovePruning = true;
+        bool lateMoveReductions = true;
     };
 
     // Once stopped is set, every search function returns at once and its score must be ignored
@@ -79,6 +95,11 @@ class Search {
         bool nullMovePruning = false;
         std::uint64_t nullMoveTries = 0;
         std::uint64_t nullMoveCutoffs = 0;
+
+        // Late move reductions make scores inexact too, so they are likewise only used when enabled
+        bool lateMoveReductions = false;
+        std::uint64_t reducedSearches = 0;
+        std::uint64_t reducedResearches = 0;
     };
 
     // Quiet moves that caused a beta cutoff, two per ply, the most recent first

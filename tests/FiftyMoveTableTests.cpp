@@ -429,10 +429,12 @@ TEST_CASE("Clock-tagged cutoffs after a capture or pawn move do not tie the posi
 }
 
 TEST_CASE("Scores relying on tagged cutoffs in a real search are stored for that clock only") {
+    // Late move reductions would shape the tree differently and reach this position elsewhere
     TranspositionTable tt(16);
     Board root = boardFrom(kingQueenFen(90));
     Search::Limits limits;
     limits.depth = 9;
+    limits.lateMoveReductions = false;
     Search::findBestMove(root, limits, nullptr, {}, &tt);
 
     // Reached at ply 7 and clock 97, where a clock-tagged cutoff below it made it a lower bound of
